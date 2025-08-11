@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+.env
+.env.*
+
+# macOS
+.DS_Store
+
+# Logs
+logs/
+
+# Test cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editor
+*.swp
+*.swo
+.idea/
+.vscode/
