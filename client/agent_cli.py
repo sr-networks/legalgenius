@@ -294,7 +294,7 @@ def run_agent(query: str, mcp: MCPClient, cfg: dict, client: OpenAI, model: str,
     ]
 
     steps = 0
-    max_steps = 10
+    max_steps = 15
     while True:
         if steps >= max_steps:
             return "Konnte keine zufriedenstellende Antwort in 10 Schritten finden."
@@ -312,7 +312,7 @@ def run_agent(query: str, mcp: MCPClient, cfg: dict, client: OpenAI, model: str,
             return f"LLM create failed: {e}"
 
         msg = resp.choices[0].message
-        print (msg.content,"\n")
+        print (msg,"\n")
         tool_calls = getattr(msg, "tool_calls", None)
         if tool_calls:
             # include assistant message that requested tool calls
