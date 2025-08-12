@@ -65,7 +65,8 @@ class MCPClient:
                 return f"tool: {tool}\npath: {path}\nresult: {text}"
             if tool == "search_rg":
                 hits = (result or {}).get("hits", [])
-                lines: List[str] = [f"tool: {tool}", f"hits: {len(hits)}"]
+                q = args.get("query")
+                lines: List[str] = [f"tool: {tool}", f"query: {q}", f"hits: {len(hits)}"]
                 for h in hits[:5]:
                     p = h.get("path")
                     ln = h.get("lines", {}).get("line_number")
@@ -74,7 +75,8 @@ class MCPClient:
                 return "\n".join(lines)
             if tool in ("file_search", "list_paths"):
                 files = (result or {}).get("files", [])
-                header = f"tool: {tool}\nfiles ({len(files)}):"
+                q = args.get("query") or args.get("subdir")
+                header = f"tool: {tool}\nquery: {q}\nfiles ({len(files)}):"
                 body = "\n".join(files[:20])
                 return f"{header}\n{body}" if files else header
             return f"tool: {tool}\n" + json.dumps(result, ensure_ascii=False)
@@ -139,43 +141,28 @@ def call_llm(
 
 
 TOOL_SUMMARY = (
-    "You can call tools via JSON. Available tools:\n"
-    "1) file_search:\n"
-    "   args: {query: string (use AND/OR and parentheses), glob?: string, max_results?: int}.\n"
-    "   Returns: {files: string[]} where each file contains all terms in a conjunction somewhere in the file.\n"
-    "2) list_paths:\n"
-    "   args: {subdir?: string (default '.')}. Returns {files: string[]} of allowed files under subdir.\n"
-    "3) search_rg (ripgrep):\n"
-    "   args: {query: string, file_list?: string[], max_results?: int, context_lines?: int, context_bytes?: int}.\n"
-    "   Returns: {hits: [{path, lines:{text, line_number}, byte_range, preview?}]}."
-    "   Use a query with one keyword or a phrase. For search_rg never use boolean AND/OR and parentheses.\n"
-    "   For search_rg, be extremely specific about the file names and only use file names that have been listed by other tools."
-    "4) read_file_range: args: {path: string, start: int, end: int, context?: int}. Returns text around a match.\n"
-)
-
-FORMAT_INSTRUCTIONS = (
-    "For a tool call, respond ONLY with a JSON object. One of:\n"
-    "{\"action\": \"file_search\", \"args\": {\"query\": string}}\n"
-    "{\"action\": \"list_paths\", \"args\": {\"query\": string}}\n"
-    "{\"action\": \"search_rg\", \"args\": {\"query\": string, \"glob\": string|null, \"context_lines\": int|null}}\n"
-    "For search keywords, never use an abbreviation or an acronym. For example, use 'Baugesetzbuch' instead of 'BauGB'."
+    "Available tools (function calling):\n"
+    "1) file_search: args {query: string with AND/OR and parentheses, glob?: string, max_results?: int}. Returns {files: string[]}.\n"
+    "2) list_paths: args {subdir?: string}. Returns {files: string[]} of allowed files under subdir. For top dir use '.' \n"
+    "3) search_rg (ripgrep): args {query: string, file_list?: string[], max_results?: int, context_lines?: int}. Returns {hits: [...]}\n"
+    "4) read_file_range: args {path, start, end, context?}. Returns text around a match.\n"
 )
 
 SYSTEM_PROMPT = (
     "You are a legal research agent. Goal: answer the user's question using provided tools.\n"
     "Policy:\n"
-    "- First think which legal resources, laws or legal procedures could be relevant." 
-    "- Think about appropriate keywords to search for that are relevant to the question and the legal corpus." 
+    "- First think which legal resources, laws or legal procedures could be relevant."
+    "- Think about appropriate keywords to search for that are relevant to the question and the legal corpus."
     "- The legal corpus consists of all the laws in Germany."
     "- They are stored in a number of subfolders which you can access using the tools."
-    "- You must first use the list_paths tool to get a list of all files in the legal corpus."
-    "- Think which file could be related to a law or legal domain."
     "- Think how you can leverage the tools and the structure of folders and laws and the meaning of filenames."
     "- Reflect on the results and whether it is sufficient to answer the user's request."
     "- If no sufficient knowledge is obtained yet, refine the requests, broaden the search, increase max_results and context_lines and try tool use again.\n"
     "- If it suffices, produce final_answer with a short quote and a citation (path + line number).\n"
-    "- When stopping due to limit, produce final_answer explaining what was tried and why no answer found.\n"
-    + "\n" + TOOL_SUMMARY + "\n" + FORMAT_INSTRUCTIONS
+    "- Do NOT use abbreviations or acronyms in the search. For instance use Bürgerliches Gesetzbuch instead of BGB."
+    "- If search_rg returns no results, try to broaden the search by using less keywords or phrases."
+    "- When stopping due to limit, produce final_answer explaining what was tried and why no answer found.\n\n"
+    + TOOL_SUMMARY
 )
 
 
@@ -210,8 +197,8 @@ def _build_tools_spec() -> List[Dict[str, Any]]:
                     "type": "object",
                     "properties": {
                         "query": {"type": "string"},
-                        "glob": {"type": ["string", "null"]},
-                        "max_results": {"type": ["integer", "null"], "minimum": 40},
+                        "glob": {"type": "string"},
+                        "max_results": {"type": "integer", "minimum": 1},
                     },
                     "required": ["query"],
                 },
@@ -225,7 +212,7 @@ def _build_tools_spec() -> List[Dict[str, Any]]:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "subdir": {"type": ["string", "null"]},
+                        "subdir": {"type": "string"},
                     },
                     "required": [],
                 },
@@ -235,14 +222,14 @@ def _build_tools_spec() -> List[Dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "search_rg",
-                "description": "Search lines using ripgrep (supports boolean AND/OR and parentheses). Optional file_list narrows search.",
+                "description": "Search lines using ripgrep. Optional file_list narrows search.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "query": {"type": "string"},
-                        "file_list": {"type": ["array", "null"], "items": {"type": "string"}},
-                        "max_results": {"type": ["integer", "null"], "minimum": 1},
-                        "context_lines": {"type": ["integer", "null"], "minimum": 0},
+                        "file_list": {"type": "array", "items": {"type": "string"}},
+                        "max_results": {"type": "integer", "minimum": 1},
+                        "context_lines": {"type": "integer", "minimum": 0},
                     },
                     "required": ["query"],
                 },
@@ -259,7 +246,7 @@ def _build_tools_spec() -> List[Dict[str, Any]]:
                         "path": {"type": "string"},
                         "start": {"type": "integer", "minimum": 0},
                         "end": {"type": "integer", "minimum": 0},
-                        "context": {"type": ["integer", "null"], "minimum": 0},
+                        "context": {"type": "integer", "minimum": 0},
                     },
                     "required": ["path", "start", "end"],
                 },
@@ -294,6 +281,12 @@ def run_agent(query: str, mcp: MCPClient, cfg: dict, client: OpenAI, model: str,
         })
         return json.dumps(res, ensure_ascii=False)
 
+    def dispatch_list_paths(subdir: Optional[str] = None) -> str:
+        res = mcp.call_tool("list_paths", {
+            "subdir": subdir,
+        })
+        return json.dumps(res, ensure_ascii=False)
+
     def dispatch_read_file_range(path: str, start: int, end: int, context: Optional[int] = None) -> str:
         res = mcp.call_tool("read_file_range", {
             "path": path,
@@ -305,6 +298,7 @@ def run_agent(query: str, mcp: MCPClient, cfg: dict, client: OpenAI, model: str,
 
     DISPATCH: Dict[str, Any] = {
         "file_search": dispatch_file_search,
+        "list_paths": dispatch_list_paths,
         "search_rg": dispatch_search_rg,
         "read_file_range": dispatch_read_file_range,
     }
@@ -327,21 +321,39 @@ def run_agent(query: str, mcp: MCPClient, cfg: dict, client: OpenAI, model: str,
                 messages=messages,
                 tools=tools,
                 tool_choice="auto",
-#                extra_headers=extra_headers or None,
+                extra_headers=extra_headers or None,
             )
         except Exception as e:
             return f"LLM create failed: {e}"
 
         msg = resp.choices[0].message
-        print (msg.content,"\n")
+        out_text = getattr(msg, "content", None) or getattr(msg, "reasoning_content", None) or getattr(msg, "reasoning", None) or ""
+        if out_text:
+            print(out_text, "\n")
         tool_calls = getattr(msg, "tool_calls", None)
         if tool_calls:
-            # include assistant message that requested tool calls
-            messages.append({
+            # Build assistant message with properly stringified function.arguments
+            assistant_msg: Dict[str, Any] = {
                 "role": "assistant",
-                "content": msg.content or "",
-                "tool_calls": [tc.model_dump() for tc in tool_calls],
-            })
+                "content": (getattr(msg, "content", None) or None),
+                "tool_calls": [],
+            }
+            for tc in tool_calls:
+                args_val = getattr(tc.function, "arguments", "")
+                if not isinstance(args_val, str):
+                    try:
+                        args_val = json.dumps(args_val, ensure_ascii=False)
+                    except Exception:
+                        args_val = "{}"
+                assistant_msg["tool_calls"].append({
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": args_val,
+                    },
+                })
+            messages.append(assistant_msg)
             for tc in tool_calls:
                 name = tc.function.name
                 try:
@@ -371,7 +383,7 @@ def run_agent(query: str, mcp: MCPClient, cfg: dict, client: OpenAI, model: str,
 def main():
     parser = argparse.ArgumentParser(description="Legal QA over local corpus via MCP + LLM agent")
     parser.add_argument("query", type=str, help="User legal question")
-    parser.add_argument("--model", default=os.environ.get("OPENROUTER_MODEL", "anthropic/claude-sonnet-4"), help="OpenRouter model id")
+    parser.add_argument("--model", default=os.environ.get("OPENROUTER_MODEL", "openai/gpt-oss-120b"), help="OpenRouter model id")
     parser.add_argument("--api-key", default=os.environ.get("OPENROUTER_API_KEY"), help="OpenRouter API key")
     parser.add_argument("--base-url", default=os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"), help="OpenAI-compatible base URL")
     parser.add_argument("--referer", default=os.environ.get("OPENROUTER_SITE_URL"), help="HTTP-Referer header (your site URL)")
