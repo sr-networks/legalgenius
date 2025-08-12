@@ -57,10 +57,31 @@ class MCPClient:
         if "error" in resp:
             raise RuntimeError(resp["error"].get("message", "Unknown error"))
         result = resp.get("result", {})
-        # Log tool call result to stdout as JSON
+        # Human-readable log lines
+        def _fmt() -> str:
+            if tool == "read_file_range":
+                path = (result or {}).get("path") or args.get("path")
+                text = (result or {}).get("text", "")
+                return f"tool: {tool}\npath: {path}\nresult: {text}"
+            if tool == "search_rg":
+                hits = (result or {}).get("hits", [])
+                lines: List[str] = [f"tool: {tool}", f"hits: {len(hits)}"]
+                for h in hits[:5]:
+                    p = h.get("path")
+                    ln = h.get("lines", {}).get("line_number")
+                    tx = (h.get("lines", {}).get("text") or "").strip()
+                    lines.append(f"- {p}#L{ln}: {tx}")
+                return "\n".join(lines)
+            if tool in ("file_search", "list_paths"):
+                files = (result or {}).get("files", [])
+                header = f"tool: {tool}\nfiles ({len(files)}):"
+                body = "\n".join(files[:20])
+                return f"{header}\n{body}" if files else header
+            return f"tool: {tool}\n" + json.dumps(result, ensure_ascii=False)
+
+        out = _fmt()
         try:
-            log_record = {"tool": tool, "args": args, "result": result}
-            sys.stdout.write(json.dumps(log_record, ensure_ascii=False) + "\n")
+            sys.stdout.write(out + "\n")
             sys.stdout.flush()
         except Exception:
             pass
@@ -294,10 +315,10 @@ def run_agent(query: str, mcp: MCPClient, cfg: dict, client: OpenAI, model: str,
     ]
 
     steps = 0
-    max_steps = 15
+    max_steps = 50
     while True:
         if steps >= max_steps:
-            return "Konnte keine zufriedenstellende Antwort in 10 Schritten finden."
+            return "Konnte keine zufriedenstellende Antwort finden."
         print("\nSTEP", steps)
         steps += 1
         try:
@@ -312,7 +333,7 @@ def run_agent(query: str, mcp: MCPClient, cfg: dict, client: OpenAI, model: str,
             return f"LLM create failed: {e}"
 
         msg = resp.choices[0].message
-        print (msg,"\n")
+        print (msg.content,"\n")
         tool_calls = getattr(msg, "tool_calls", None)
         if tool_calls:
             # include assistant message that requested tool calls
