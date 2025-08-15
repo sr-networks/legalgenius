@@ -117,7 +117,7 @@ def call_llm(
     model: str,
     referer: Optional[str] = None,
     site_title: Optional[str] = None,
-    temperature: float = 0.2,
+    temperature: float = 0.0,
 ) -> str:
     extra_headers: Dict[str, str] = {}
     if referer:
@@ -130,6 +130,7 @@ def call_llm(
             messages=messages,
             temperature=temperature,
             extra_headers=extra_headers or None,
+            max_tokens=800,
             extra_body={},
         )
     except Exception as e:
@@ -141,27 +142,29 @@ def call_llm(
 
 
 TOOL_SUMMARY = (
-    "Available tools (function calling):\n"
-    "1) file_search: args {query: string with AND/OR and parentheses, glob?: string, max_results?: int}. Returns {files: string[]}.\n"
-    "2) list_paths: args {subdir?: string}. Returns {files: string[]} of allowed files under subdir. For top dir use '.' \n"
-    "3) search_rg (ripgrep): args {query: string, file_list?: string[], max_results?: int, context_lines?: int}. Returns {hits: [...]}\n"
-    "4) read_file_range: args {path, start, end, context?}. Returns text around a match.\n"
+    "Verfügbare Werkzeuge (Function Calling):\n"
+    "1) file_search: Argumente {query: Zeichenkette mit AND/OR und Klammern, glob?: Zeichenkette, max_results?: Zahl}. Rückgabe {files: Zeichenkette[]}.\n"
+    "2) list_paths: Argumente {subdir?: Zeichenkette}. Rückgabe {files: Zeichenkette[]} der erlaubten Dateien unterhalb von subdir. Für das Wurzelverzeichnis verwende '.'.\n"
+    "3) search_rg (ripgrep): Argumente {query: Zeichenkette, file_list?: Zeichenkette[], max_results?: Zahl, context_lines?: Zahl}. Rückgabe {hits: [...]}\n"
+    "4) read_file_range: Argumente {path, start, end, context?}. Rückgabe: Textausschnitt um den Treffer.\n"
 )
 
 SYSTEM_PROMPT = (
-    "You are a legal research agent. Goal: answer the user's question using provided tools.\n"
-    "Policy:\n"
-    "- First think which legal resources, laws or legal procedures could be relevant."
-    "- Think about appropriate keywords to search for that are relevant to the question and the legal corpus."
-    "- The legal corpus consists of all the laws in Germany."
-    "- They are stored in a number of subfolders which you can access using the tools."
-    "- Think how you can leverage the tools and the structure of folders and laws and the meaning of filenames."
-    "- Reflect on the results and whether it is sufficient to answer the user's request."
-    "- If no sufficient knowledge is obtained yet, refine the requests, broaden the search, increase max_results and context_lines and try tool use again.\n"
-    "- If it suffices, produce final_answer with a short quote and a citation (path + line number).\n"
-    "- Do NOT use abbreviations or acronyms in the search. For instance use Bürgerliches Gesetzbuch instead of BGB."
-    "- If search_rg returns no results, try to broaden the search by using less keywords or phrases."
-    "- When stopping due to limit, produce final_answer explaining what was tried and why no answer found.\n\n"
+    "Du bist ein Recherche-Agent für deutsches Recht. Ziel: Beantworte die Nutzerfrage mithilfe der bereitgestellten Werkzeuge.\n"
+    "Richtlinien:\n"
+    "- Überlege zuerst, welche Rechtsquellen, Gesetze oder Verfahren relevant sein könnten."
+    "- Denke über passende Suchbegriffe nach, die zur Frage und zum Rechtskorpus passen."
+    "- Der Rechtskorpus besteht aus allen Gesetzen in Deutschland."
+    "- Sie sind in mehreren Unterordnern abgelegt, auf die du mit den Werkzeugen zugreifen kannst."
+    "- Nutze zuerst list_paths, um verfügbare Dateien zu sichten; verwende dann file_search zur Vorauswahl; nutze anschließend search_rg für präzise Fundstellen."
+    "- Überlege, wie du die Ordnerstruktur, Gesetzesnamen und Dateinamen ausnutzen kannst."
+    "- Reflektiere die Ergebnisse und ob sie für eine Antwort ausreichen."
+    "- Falls nicht ausreichend, verfeinere oder erweitere die Suche, erhöhe ggf. max_results/context_lines und versuche die Werkzeuge erneut.\n"
+    "- Verwende keine Abkürzungen oder Akronyme in Suchanfragen (z. B. 'Bürgerliches Gesetzbuch' statt 'BGB')."
+    "- Suche auch mit search_rg in der neueren Rechtsprechung im Ordner urteile_markdown_by_year."
+    "- Falls search_rg keine Ergebnisse liefert, vereinfache oder erweitere die Suchbegriffe."
+    "- Wenn ausreichend, erzeuge final_answer mit kurzer Textstelle und Zitation (Pfad + Zeilennummer).\n"
+    "- Bei Abbruch wegen Limit: final_answer mit kurzer Erklärung, was versucht wurde und warum keine Antwort gefunden wurde.\n\n"
     + TOOL_SUMMARY
 )
 
@@ -198,7 +201,7 @@ def _build_tools_spec() -> List[Dict[str, Any]]:
                     "properties": {
                         "query": {"type": "string"},
                         "glob": {"type": "string"},
-                        "max_results": {"type": "integer", "minimum": 1},
+                        "max_results": {"type": "integer", "minimum": 10},
                     },
                     "required": ["query"],
                 },
@@ -214,7 +217,7 @@ def _build_tools_spec() -> List[Dict[str, Any]]:
                     "properties": {
                         "subdir": {"type": "string"},
                     },
-                    "required": [],
+                    "required": ["subdir"],
                 },
             },
         },
@@ -222,14 +225,14 @@ def _build_tools_spec() -> List[Dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "search_rg",
-                "description": "Search lines using ripgrep. Optional file_list narrows search.",
+                "description": "Search lines using ripgrep. Optional file_list narrows search. Use only one keyword or phrase per search. do not list several keywords.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "query": {"type": "string"},
                         "file_list": {"type": "array", "items": {"type": "string"}},
-                        "max_results": {"type": "integer", "minimum": 1},
-                        "context_lines": {"type": "integer", "minimum": 0},
+                        "max_results": {"type": "integer", "minimum": 10},
+                        "context_lines": {"type": "integer", "minimum": 1},
                     },
                     "required": ["query"],
                 },
@@ -314,28 +317,46 @@ def run_agent(query: str, mcp: MCPClient, cfg: dict, client: OpenAI, model: str,
         if steps >= max_steps:
             return "Konnte keine zufriedenstellende Antwort finden."
         print("\nSTEP", steps)
+        used_any_tool = any(m.get("role") == "tool" for m in messages)
+        tool_choice_val = "auto" if used_any_tool else "required"
+
         steps += 1
         try:
             resp = client.chat.completions.create(
                 model=model,
                 messages=messages,
                 tools=tools,
-                tool_choice="auto",
+                tool_choice=tool_choice_val,
                 extra_headers=extra_headers or None,
+                parallel_tool_calls=False,
             )
         except Exception as e:
             return f"LLM create failed: {e}"
+
+        # Guard against empty or malformed responses
+        if not getattr(resp, "choices", None) or not resp.choices:
+            # Retry next loop iteration
+            time.sleep(0.2)
+            continue
 
         msg = resp.choices[0].message
         out_text = getattr(msg, "content", None) or getattr(msg, "reasoning_content", None) or getattr(msg, "reasoning", None) or ""
         if out_text:
             print(out_text, "\n")
         tool_calls = getattr(msg, "tool_calls", None)
+#        print (tool_calls)
+        fc = getattr(msg, "function_call", None)
+        if fc and not tool_calls:
+            tool_calls = [{
+                "id": "fc_1",
+                "type": "function",
+                "function": {"name": fc.name, "arguments": fc.arguments or "{}"},
+            }]
         if tool_calls:
             # Build assistant message with properly stringified function.arguments
             assistant_msg: Dict[str, Any] = {
                 "role": "assistant",
-                "content": (getattr(msg, "content", None) or None),
+                "content": (getattr(msg, "content", None) or ""),
                 "tool_calls": [],
             }
             for tc in tool_calls:
@@ -348,10 +369,7 @@ def run_agent(query: str, mcp: MCPClient, cfg: dict, client: OpenAI, model: str,
                 assistant_msg["tool_calls"].append({
                     "id": tc.id,
                     "type": "function",
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": args_val,
-                    },
+                    "function": {"name": tc.function.name, "arguments": args_val},
                 })
             messages.append(assistant_msg)
             for tc in tool_calls:
@@ -371,7 +389,6 @@ def run_agent(query: str, mcp: MCPClient, cfg: dict, client: OpenAI, model: str,
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
-                    "name": name,
                     "content": result_text,
                 })
             continue
@@ -383,7 +400,10 @@ def run_agent(query: str, mcp: MCPClient, cfg: dict, client: OpenAI, model: str,
 def main():
     parser = argparse.ArgumentParser(description="Legal QA over local corpus via MCP + LLM agent")
     parser.add_argument("query", type=str, help="User legal question")
-    parser.add_argument("--model", default=os.environ.get("OPENROUTER_MODEL", "openai/gpt-oss-120b"), help="OpenRouter model id")
+    #"qwen/qwen3-235b-a22b" geht aber langsam
+    # qwen/qwen3-235b-a22b-thinking-2507 etwas schneller
+    # "openai/gpt-5-mini" und nano gehen jetzt gut!
+    parser.add_argument("--model", default=os.environ.get("OPENROUTER_MODEL", "anthropic/claude-sonnet-4"), help="OpenRouter model id")
     parser.add_argument("--api-key", default=os.environ.get("OPENROUTER_API_KEY"), help="OpenRouter API key")
     parser.add_argument("--base-url", default=os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"), help="OpenAI-compatible base URL")
     parser.add_argument("--referer", default=os.environ.get("OPENROUTER_SITE_URL"), help="HTTP-Referer header (your site URL)")
@@ -407,7 +427,7 @@ def main():
     try:
         client = OpenAI(base_url=args.base_url, api_key=args.api_key)
         answer = run_agent(args.query, mcp, cfg, client, model=args.model, referer=args.referer, site_title=args.site_title)
-        print(answer)
+#        print(answer)
     finally:
         mcp.close()
 
