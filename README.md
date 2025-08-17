@@ -1,6 +1,6 @@
 # LegalGenius
 
-A German legal research and question-answering system that provides AI-powered search capabilities over German federal laws, regulations, and court decisions.
+A comprehensive German legal research and question-answering system that provides AI-powered search capabilities over German federal laws, regulations, and court decisions. Available as both a modern web interface and command-line tool.
 
 ## Overview
 
@@ -8,6 +8,7 @@ LegalGenius combines a comprehensive corpus of German legal documents with an in
 
 ## Features
 
+- **Modern Web Interface**: React-based frontend with real-time streaming responses
 - **Comprehensive Legal Database**: Complete collection of German federal laws and regulations (Bundesgesetze und -verordnungen) in Markdown format
 - **Court Decision Archive**: Extensive collection of court decisions organized by year (1970-2029)
 - **Intelligent Search**: Boolean query support with AND/OR operators and parentheses
@@ -15,12 +16,15 @@ LegalGenius combines a comprehensive corpus of German legal documents with an in
 - **Advanced Text Search**: Powered by ripgrep for fast, precise text matching
 - **Context-Aware Results**: Provides relevant excerpts with configurable context
 - **German Language Optimized**: Designed specifically for German legal terminology and structure
+- **Modular Architecture**: Supports web UI, CLI, and batch processing
+- **Real-time Streaming**: Live updates showing tool usage and reasoning steps
 
 ## Quick Start
 
 ### Prerequisites
 
 - Python 3.8+
+- Node.js 18+ (for web interface)
 - ripgrep (`rg`) installed and available in PATH
 - An API key for your chosen LLM provider
 
@@ -32,34 +36,61 @@ git clone <repository-url>
 cd legalgenius
 ```
 
-2. Set up the environment:
+2. Set up the Python environment:
 ```bash
 make venv
 make dev
 ```
 
-3. Configure your LLM provider by setting environment variables:
-
-**For OpenRouter (default):**
+3. Set up the web interface:
 ```bash
-export OPENROUTER_API_KEY="your-api-key"
-export OPENROUTER_MODEL="anthropic/claude-sonnet-4"  # optional
+make web-install
 ```
 
-**For Nebius:**
+4. Configure your LLM provider by setting environment variables:
+
+**For Nebius (default):**
 ```bash
 export LLM_PROVIDER="nebius"
 export NEBIUS_API_KEY="your-api-key"
-export NEBIUS_MODEL="your-model-id"
+export NEBIUS_MODEL="zai-org/GLM-4.5"
+```
+
+**For OpenRouter:**
+```bash
+export LLM_PROVIDER="openrouter"
+export OPENROUTER_API_KEY="your-api-key"
+export OPENROUTER_MODEL="anthropic/claude-sonnet-4"  # optional
 ```
 
 **For Ollama (local):**
 ```bash
 export LLM_PROVIDER="ollama"
-export OLLAMA_MODEL="qwen/qwen3-4b-2507"  # optional
+export OLLAMA_MODEL="qwen3:4b"  # optional
 ```
 
 ### Usage
+
+#### Web Interface (Recommended)
+
+1. Start the API server:
+```bash
+make api
+```
+
+2. In a new terminal, start the web development server:
+```bash
+make web-dev
+```
+
+3. Open your browser to `http://localhost:5173`
+
+The web interface provides:
+- Real-time streaming responses
+- Tool usage visualization
+- Model configuration
+- Chat history
+- Session management
 
 #### Command Line Interface
 
@@ -75,6 +106,23 @@ Or use the Python client directly:
 python client/agent_cli.py "Was sind die Voraussetzungen für eine Scheidung?"
 ```
 
+#### Batch Processing API
+
+For processing multiple queries, use the batch endpoint:
+
+```bash
+curl -X POST "http://localhost:8000/batch" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "queries": [
+      "Was ist die Kündigungsfrist bei Mietverträgen?",
+      "Welche Voraussetzungen gelten für eine Scheidung?"
+    ],
+    "provider": "nebius",
+    "model": "zai-org/GLM-4.5"
+  }'
+```
+
 #### Starting the MCP Server
 
 To run the server independently:
@@ -87,17 +135,30 @@ make server
 
 ### Components
 
-1. **MCP Server** (`mcp_server/`):
+1. **Web Interface** (`web/`):
+   - React TypeScript frontend with Vite bundling
+   - Real-time streaming using Server-Sent Events
+   - Modern UI with Tailwind CSS
+   - Local storage for configuration and chat history
+
+2. **API Server** (`web_server/`):
+   - FastAPI backend at `http://localhost:8000`
+   - Modular agent runner supporting web UI and batch jobs
+   - CORS-enabled for frontend integration
+   - Health checks and error handling
+
+3. **MCP Server** (`mcp_server/`):
    - `server.py`: JSON-RPC server handling tool calls
    - `tools.py`: Core search and file access tools with security sandbox
    - Provides secure, sandboxed access to legal documents
 
-2. **Client** (`client/`):
-   - `agent_cli.py`: Command-line interface with LLM integration
+4. **Agent Core** (`client/`):
+   - `agent_cli.py`: Modular agent implementation with `run_agent` method
    - Supports multiple LLM providers through OpenAI-compatible APIs
    - Implements function calling for intelligent tool usage
+   - Configurable timeout and step limits
 
-3. **Data** (`data/`):
+5. **Data** (`data/`):
    - `gesetze/`: German federal laws and regulations in Markdown
    - `urteile_markdown_by_year/`: Court decisions organized by year
    - All content sourced from official German legal repositories
@@ -108,6 +169,29 @@ make server
 - **`search_rg`**: Precise line-by-line search using ripgrep
 - **`read_file_range`**: Extract text snippets with configurable context
 - **`list_paths`**: Browse available documents and directories
+
+### API Endpoints
+
+- `GET /health`: Server health check
+- `POST /ask`: Single query processing
+- `POST /batch`: Batch query processing
+- `POST /test`: Limited-step testing endpoint
+
+### Modular Agent Architecture
+
+The core `run_agent` method in `client/agent_cli.py` is designed to be modular and supports multiple interfaces:
+
+1. **Web Interface**: Real-time streaming via FastAPI endpoints
+2. **Command Line**: Direct CLI usage with immediate results  
+3. **Batch Processing**: Multiple queries processed sequentially
+4. **API Integration**: RESTful endpoints for external systems
+
+The agent automatically:
+- Manages MCP server connections
+- Handles LLM provider switching
+- Provides tool usage tracking
+- Implements configurable timeouts and step limits
+- Never uses mock responses (always real LLM calls)
 
 ## Configuration
 
@@ -128,8 +212,19 @@ Environment variables take precedence over configuration files.
 
 ```
 legalgenius/
-├── client/               # CLI client and LLM integration
+├── web/                 # React frontend
+│   ├── src/            # TypeScript source code
+│   ├── public/         # Static assets
+│   └── package.json    # Frontend dependencies
+├── web_server/          # FastAPI backend
+│   ├── api.py         # Main API server
+│   ├── app.py         # Legacy Flask server (deprecated)
+│   └── requirements.txt
+├── client/              # CLI client and agent core
+│   └── agent_cli.py    # Modular agent with run_agent method
 ├── mcp_server/          # MCP server implementation
+│   ├── server.py       # JSON-RPC server
+│   └── tools.py        # Search and file access tools
 ├── data/                # Legal document corpus
 │   ├── gesetze/        # Federal laws and regulations
 │   └── urteile_markdown_by_year/  # Court decisions
@@ -140,11 +235,38 @@ legalgenius/
 
 ### Available Make Commands
 
-- `make dev`: Install dependencies in virtual environment
-- `make server`: Start the MCP server
-- `make client q="query"`: Run a query through the client
-- `make test`: Run tests (if available)
+- `make dev`: Install Python dependencies in virtual environment
 - `make venv`: Create virtual environment
+- `make server`: Start the MCP server independently
+- `make client q="query"`: Run a query through the CLI
+- `make api`: Start the FastAPI backend server (port 8000)
+- `make web-install`: Install frontend dependencies
+- `make web-dev`: Start the React development server (port 5173)
+- `make test`: Run tests (if available)
+
+### Development Workflow
+
+1. **Frontend Development**: 
+   ```bash
+   make web-dev  # Start React dev server with hot reload
+   ```
+
+2. **Backend Development**:
+   ```bash
+   make api      # Start FastAPI server with auto-reload
+   ```
+
+3. **Full Stack Development**:
+   ```bash
+   # Terminal 1: API server
+   make api
+   
+   # Terminal 2: Frontend dev server  
+   make web-dev
+   
+   # Terminal 3: Test CLI (optional)
+   make client q="test query"
+   ```
 
 ### Adding New Documents
 

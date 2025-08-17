@@ -326,7 +326,7 @@ def run_agent(
 
 
     steps = 0
-    max_steps = 100
+    max_steps = 50  # Further reduced to prevent hanging
     while True:
         if steps >= max_steps:
             return "Konnte keine zufriedenstellende Antwort finden."
@@ -347,6 +347,7 @@ def run_agent(
                 tools=tools,
                 tool_choice=tool_choice_val,
                 extra_headers=extra_headers or None,
+                timeout=30,  # Add 30 second timeout
             )
             resp = client.chat.completions.create(**create_kwargs)
 #            print ("RESP", resp)
@@ -424,18 +425,18 @@ def main():
     # qwen/qwen3-235b-a22b-thinking-2507 etwas schneller
     # "openai/gpt-5-mini" und nano gehen jetzt gut!
     # "anthropic/claude-sonnet-4"
-    parser.add_argument("--model", default=os.environ.get("OPENROUTER_MODEL", "zai-org/GLM-4.5"), help="Model id (provider-specific)")
+    parser.add_argument("--model", default=None, help="Model id (provider-specific)")
     parser.add_argument("--api-key", default=None, help="API key. If omitted, uses provider-specific env (OPENROUTER_API_KEY, NEBIUS_API_KEY, or OLLAMA_API_KEY).")
-    parser.add_argument("--base-url", default=os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"), help="OpenAI-compatible base URL")
+    parser.add_argument("--base-url", default=None, help="OpenAI-compatible base URL (overrides provider default)")
     parser.add_argument("--referer", default=os.environ.get("OPENROUTER_SITE_URL"), help="HTTP-Referer header (your site URL)")
     parser.add_argument("--site-title", default=os.environ.get("OPENROUTER_SITE_TITLE"), help="X-Title header (your site title)")
-    parser.add_argument("--provider", choices=["openrouter", "nebius", "ollama"], default=os.environ.get("LLM_PROVIDER", "openrouter"), help="LLM backend: openrouter (default), nebius, or ollama")
+    parser.add_argument("--provider", choices=["openrouter", "nebius", "ollama"], default=os.environ.get("LLM_PROVIDER", "nebius"), help="LLM backend: nebius (default), openrouter, or ollama")
     
     args = parser.parse_args()
 
     # Resolve provider-specific defaults
     openrouter_default_model = os.environ.get("OPENROUTER_MODEL", "anthropic/claude-sonnet-4")
-    ollama_default_model = os.environ.get("OLLAMA_MODEL", "qwen/qwen3-4b-2507")
+    ollama_default_model = os.environ.get("OLLAMA_MODEL", "qwen3:4b")
 
     if args.provider == "openrouter":
         resolved_base_url = args.base_url
@@ -464,13 +465,13 @@ def main():
             print("Missing Nebius model. Set NEBIUS_MODEL or pass --model with a Nebius-supported model id.", file=sys.stderr)
             raise SystemExit(2)
     else:
-        # Ollama (Mac app) typically runs at this base URL and does not require a real API key.
-        default_or_base = os.environ.get("OLLAMA_BASE_URL", "http://localhost:1234/v1")
-        # If the base-url is still the OpenRouter default, override it for Ollama.
-        resolved_base_url = args.base_url if args.base_url not in (None, "", os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")) else default_or_base
+        # Ollama typically runs at this base URL and does not require a real API key.
+        default_or_base = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+        # If a custom base-url is provided, use it; otherwise use Ollama default.
+        resolved_base_url = args.base_url or default_or_base
         resolved_api_key = args.api_key or os.environ.get("OLLAMA_API_KEY", "ollama")
-        # If the model looks like the OpenRouter default, switch to an Ollama-specific default unless explicitly overridden.
-        resolved_model = args.model if args.model != openrouter_default_model else ollama_default_model
+        # Choose Ollama model if not explicitly provided.
+        resolved_model = args.model or ollama_default_model
 
     # Determine tools mode: explicit flag has priority; otherwise default by provider
 #    if args.tools in ("auto", "off"):
