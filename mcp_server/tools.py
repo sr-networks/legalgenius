@@ -457,7 +457,7 @@ def file_search(
     return {"files": matched}
 
 
-def read_file_range(path: str, start: int, end: int, context: int | None = None) -> dict:
+def read_file_range(path: str, start: int, end: int, context: int | None = None, max_lines: int | None = 20) -> dict:
     """Read and return a UTF-8 decoded slice around a byte range.
 
     Parameters:
@@ -476,6 +476,18 @@ def read_file_range(path: str, start: int, end: int, context: int | None = None)
     start = max(0, min(start, len(file_bytes)))
     end = max(start, min(end, len(file_bytes)))
     text = file_bytes[start:end].decode("utf-8", errors="replace")
+    # Enforce maximum number of lines if requested
+    if max_lines is not None:
+        try:
+            ml = int(max_lines)
+        except Exception:
+            ml = 20
+        if ml > 0:
+            lines = text.splitlines(keepends=True)
+            if len(lines) > ml:
+                text = "".join(lines[:ml])
+                # Adjust end offset to match truncated UTF-8 length
+                end = start + len(text.encode("utf-8"))
     return {"path": Path(path).as_posix(), "start": start, "end": end, "text": text}
 
 

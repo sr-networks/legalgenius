@@ -144,9 +144,9 @@ def call_llm(
 TOOL_SUMMARY = (
     "Verfügbare Werkzeuge (Function Calling):\n"
     "1) file_search: Argumente {query: Zeichenkette mit AND/OR und Klammern, glob?: Zeichenkette, max_results?: Zahl}. Rückgabe {files: Zeichenkette[]}.\n"
-    "2) list_paths: Argumente {subdir?: Zeichenkette}. Rückgabe {files: Zeichenkette[]} der erlaubten Dateien unterhalb von subdir. Für das Wurzelverzeichnis verwende '.'.\n"
-    "3) search_rg (ripgrep): Argumente {query: Zeichenkette, file_list?: Zeichenkette[], max_results?: Zahl, context_lines?: Zahl}. Rückgabe {hits: [...]}\n"
-    "4) read_file_range: Argumente {path, start, end, context?}. Rückgabe: Textausschnitt um den Treffer.\n"
+#    "2) list_paths: Argumente {subdir?: Zeichenkette}. Rückgabe {files: Zeichenkette[]} der erlaubten Dateien unterhalb von subdir. Für das Wurzelverzeichnis verwende '.'. Unterverzeichnis gesetze enthält die Bundesgesetze, urteile_markdown_by_year die Rechtsprechung.\n"
+    "3) search_rg (ripgrep): Argumente {query: Zeichenkette, file_list?: Zeichenkette[], max_results?: Zahl, context_lines?: Zahl}. Rückgabe {hits: [...]}. Nur ein Keyword pro Zeichenkette.\n"
+    "4) read_file_range: Argumente {path, start, end, context?, max_lines?}. Rückgabe: Textausschnitt um den Treffer (max. 20 Zeilen standardmäßig).\n"
 )
 
 SYSTEM_PROMPT = (
@@ -156,7 +156,8 @@ SYSTEM_PROMPT = (
     "- Denke über passende Suchbegriffe nach, die zur Frage und zum Rechtskorpus passen."
     "- Der Rechtskorpus besteht aus allen Gesetzen in Deutschland."
     "- Sie sind in mehreren Unterordnern abgelegt, auf die du mit den Werkzeugen zugreifen kannst."
-    "- Nutze zuerst list_paths, um verfügbare Dateien zu sichten; verwende dann file_search zur Vorauswahl; nutze anschließend search_rg für präzise Fundstellen."
+#    "- Nutze zuerst list_paths, um verfügbare Dateien zu sichten"abs
+    "- Werwende dann file_search zur Vorauswahl; nutze anschließend search_rg für präzise Fundstellen."
     "- Überlege, wie du die Ordnerstruktur, Gesetzesnamen und Dateinamen ausnutzen kannst."
     "- Reflektiere die Ergebnisse und ob sie für eine Antwort ausreichen."
     "- Falls nicht ausreichend, verfeinere oder erweitere die Suche, erhöhe ggf. max_results/context_lines und versuche die Werkzeuge erneut.\n"
@@ -199,40 +200,40 @@ def _build_tools_spec() -> List[Dict[str, Any]]:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string"},
-                        "glob": {"type": "string"},
-                        "max_results": {"type": "integer", "minimum": 10},
+                        "query": {"type": "string", "description": "Boolean query (AND/OR, parentheses)"},
+                        "glob": {"type": "string", "description": "Glob pattern to match files"},
+                        "max_results": {"type": "integer", "minimum": 10, "description": "Maximum number of results"},
                     },
                     "required": ["query"],
                 },
             },
         },
-        {
-            "type": "function",
-            "function": {
-                "name": "list_paths",
-                "description": "List allowed files under a subdirectory (relative to sandbox root).",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "subdir": {"type": "string"},
-                    },
-                    "required": ["subdir"],
-                },
-            },
-        },
+#        {
+#            "type": "function",
+#            "function": {
+#                "name": "list_paths",
+#                "description": "List allowed files under a subdirectory (relative to sandbox root).",
+#                "parameters": {
+#                    "type": "object",
+#                    "properties": {
+#                        "subdir": {"type": "string"},
+#                    },
+#                    "required": ["subdir"],
+#                },
+#            },
+#        },
         {
             "type": "function",
             "function": {
                 "name": "search_rg",
-                "description": "Search lines using ripgrep. Optional file_list narrows search. Use only one keyword or phrase per search. do not list several keywords.",
+                "description": "Search lines using ripgrep. Optional file_list narrows search. ou MUST use exactly one keyword or phrase at a time. Never combine multiple keywords with AND/OR or regex alternations. If the user gives multiple terms, pick the single most important one (or ask the user to clarify)",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string"},
-                        "file_list": {"type": "array", "items": {"type": "string"}},
-                        "max_results": {"type": "integer", "minimum": 10},
-                        "context_lines": {"type": "integer", "minimum": 1},
+                        "query": {"type": "string", "description": "Single keyword or phrase"},
+                        "file_list": {"type": "array", "items": {"type": "string"}, "description": "Optional file list to narrow search"},
+                        "max_results": {"type": "integer", "minimum": 10, "description": "Maximum number of results"},
+                        "context_lines": {"type": "integer", "minimum": 1, "maximum": 10, "description": "Number of context lines"},
                     },
                     "required": ["query"],
                 },
@@ -250,6 +251,7 @@ def _build_tools_spec() -> List[Dict[str, Any]]:
                         "start": {"type": "integer", "minimum": 0},
                         "end": {"type": "integer", "minimum": 0},
                         "context": {"type": "integer", "minimum": 0},
+                        "max_lines": {"type": "integer", "description": "Maximum number of lines to return (default 20)"},
                     },
                     "required": ["path", "start", "end"],
                 },
@@ -258,8 +260,18 @@ def _build_tools_spec() -> List[Dict[str, Any]]:
     ]
 
 
-def run_agent(query: str, mcp: MCPClient, cfg: dict, client: OpenAI, model: str, referer: Optional[str], site_title: Optional[str]) -> str:
-    tools = _build_tools_spec()
+def run_agent(
+    query: str,
+    mcp: MCPClient,
+    cfg: dict,
+    client: OpenAI,
+    model: str,
+    referer: Optional[str],
+    site_title: Optional[str],
+    provider: str = "openrouter",
+    tools_mode: str = "auto",
+) -> str:
+    tools = _build_tools_spec() if tools_mode != "off" else []
     extra_headers: Dict[str, str] = {}
     if referer:
         extra_headers["HTTP-Referer"] = referer
@@ -290,12 +302,13 @@ def run_agent(query: str, mcp: MCPClient, cfg: dict, client: OpenAI, model: str,
         })
         return json.dumps(res, ensure_ascii=False)
 
-    def dispatch_read_file_range(path: str, start: int, end: int, context: Optional[int] = None) -> str:
+    def dispatch_read_file_range(path: str, start: int, end: int, context: Optional[int] = None, max_lines: Optional[int] = None) -> str:
         res = mcp.call_tool("read_file_range", {
             "path": path,
             "start": int(start),
             "end": int(end),
             "context": context or cfg.get("context_bytes", 300),
+            "max_lines": max_lines or 20,
         })
         return json.dumps(res, ensure_ascii=False)
 
@@ -311,25 +324,32 @@ def run_agent(query: str, mcp: MCPClient, cfg: dict, client: OpenAI, model: str,
         {"role": "user", "content": f"Question: {query}"},
     ]
 
+
     steps = 0
-    max_steps = 50
+    max_steps = 100
     while True:
         if steps >= max_steps:
             return "Konnte keine zufriedenstellende Antwort finden."
         print("\nSTEP", steps)
         used_any_tool = any(m.get("role") == "tool" for m in messages)
-        tool_choice_val = "auto" if used_any_tool else "required"
+        # Ollama's OpenAI-compatible API may not support non-standard values like "required".
+        if provider in ("ollama"):
+            tool_choice_val = "auto"
+        else:
+            tool_choice_val = "auto" if used_any_tool else "required"
 
         steps += 1
+#        print (messages)
         try:
-            resp = client.chat.completions.create(
+            create_kwargs = dict(
                 model=model,
                 messages=messages,
                 tools=tools,
                 tool_choice=tool_choice_val,
                 extra_headers=extra_headers or None,
-                parallel_tool_calls=False,
             )
+            resp = client.chat.completions.create(**create_kwargs)
+#            print ("RESP", resp)
         except Exception as e:
             return f"LLM create failed: {e}"
 
@@ -341,8 +361,8 @@ def run_agent(query: str, mcp: MCPClient, cfg: dict, client: OpenAI, model: str,
 
         msg = resp.choices[0].message
         out_text = getattr(msg, "content", None) or getattr(msg, "reasoning_content", None) or getattr(msg, "reasoning", None) or ""
-        if out_text:
-            print(out_text, "\n")
+#        if out_text:
+#            print(out_text, "\n")
         tool_calls = getattr(msg, "tool_calls", None)
 #        print (tool_calls)
         fc = getattr(msg, "function_call", None)
@@ -403,17 +423,60 @@ def main():
     #"qwen/qwen3-235b-a22b" geht aber langsam
     # qwen/qwen3-235b-a22b-thinking-2507 etwas schneller
     # "openai/gpt-5-mini" und nano gehen jetzt gut!
-    parser.add_argument("--model", default=os.environ.get("OPENROUTER_MODEL", "anthropic/claude-sonnet-4"), help="OpenRouter model id")
-    parser.add_argument("--api-key", default=os.environ.get("OPENROUTER_API_KEY"), help="OpenRouter API key")
+    # "anthropic/claude-sonnet-4"
+    parser.add_argument("--model", default=os.environ.get("OPENROUTER_MODEL", "zai-org/GLM-4.5"), help="Model id (provider-specific)")
+    parser.add_argument("--api-key", default=None, help="API key. If omitted, uses provider-specific env (OPENROUTER_API_KEY, NEBIUS_API_KEY, or OLLAMA_API_KEY).")
     parser.add_argument("--base-url", default=os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"), help="OpenAI-compatible base URL")
     parser.add_argument("--referer", default=os.environ.get("OPENROUTER_SITE_URL"), help="HTTP-Referer header (your site URL)")
     parser.add_argument("--site-title", default=os.environ.get("OPENROUTER_SITE_TITLE"), help="X-Title header (your site title)")
+    parser.add_argument("--provider", choices=["openrouter", "nebius", "ollama"], default=os.environ.get("LLM_PROVIDER", "openrouter"), help="LLM backend: openrouter (default), nebius, or ollama")
     
     args = parser.parse_args()
 
-    if not args.api_key:
-        print("Missing OpenRouter API key. Set OPENROUTER_API_KEY or pass --api-key.", file=sys.stderr)
-        raise SystemExit(2)
+    # Resolve provider-specific defaults
+    openrouter_default_model = os.environ.get("OPENROUTER_MODEL", "anthropic/claude-sonnet-4")
+    ollama_default_model = os.environ.get("OLLAMA_MODEL", "qwen/qwen3-4b-2507")
+
+    if args.provider == "openrouter":
+        resolved_base_url = args.base_url
+        resolved_api_key = args.api_key or os.environ.get("OPENROUTER_API_KEY")
+        resolved_model = args.model or openrouter_default_model
+        if not resolved_api_key:
+            print("Missing OpenRouter API key. Set OPENROUTER_API_KEY or pass --api-key.", file=sys.stderr)
+            raise SystemExit(2)
+    elif args.provider == "nebius":
+        # Nebius: OpenAI-compatible endpoint
+        # Prefer an explicit --base-url if provided and not the OpenRouter default; otherwise use NEBIUS_BASE_URL or the public default
+        default_nebius_base = os.environ.get("NEBIUS_BASE_URL", "https://api.studio.nebius.com/v1/")
+        resolved_base_url = (
+            args.base_url
+            if args.base_url not in (None, "", os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"))
+            else default_nebius_base
+        )
+        # Use provided --api-key if set; otherwise fall back to NEBIUS_API_KEY
+        resolved_api_key = args.api_key or os.environ.get("NEBIUS_API_KEY")
+        # Require a Nebius-supported model id via --model or NEBIUS_MODEL
+        resolved_model = args.model or os.environ.get("NEBIUS_MODEL")
+        if not resolved_api_key:
+            print("Missing Nebius API key. Set NEBIUS_API_KEY or pass --api-key.", file=sys.stderr)
+            raise SystemExit(2)
+        if not resolved_model:
+            print("Missing Nebius model. Set NEBIUS_MODEL or pass --model with a Nebius-supported model id.", file=sys.stderr)
+            raise SystemExit(2)
+    else:
+        # Ollama (Mac app) typically runs at this base URL and does not require a real API key.
+        default_or_base = os.environ.get("OLLAMA_BASE_URL", "http://localhost:1234/v1")
+        # If the base-url is still the OpenRouter default, override it for Ollama.
+        resolved_base_url = args.base_url if args.base_url not in (None, "", os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")) else default_or_base
+        resolved_api_key = args.api_key or os.environ.get("OLLAMA_API_KEY", "ollama")
+        # If the model looks like the OpenRouter default, switch to an Ollama-specific default unless explicitly overridden.
+        resolved_model = args.model if args.model != openrouter_default_model else ollama_default_model
+
+    # Determine tools mode: explicit flag has priority; otherwise default by provider
+#    if args.tools in ("auto", "off"):
+#        resolved_tools_mode = args.tools
+#    else:
+#        resolved_tools_mode = "auto" if args.provider == "openrouter" else "off"
 
     cfg = load_config()
     server_cmd_env = os.environ.get("MCP_SERVER_CMD")
@@ -425,9 +488,19 @@ def main():
 
     mcp = MCPClient(server_cmd=server_cmd, env=env)
     try:
-        client = OpenAI(base_url=args.base_url, api_key=args.api_key)
-        answer = run_agent(args.query, mcp, cfg, client, model=args.model, referer=args.referer, site_title=args.site_title)
-#        print(answer)
+        client = OpenAI(base_url=resolved_base_url, api_key=resolved_api_key)
+        answer = run_agent(
+            args.query,
+            mcp,
+            cfg,
+            client,
+            model=resolved_model,
+            referer=args.referer if args.provider == "openrouter" else None,
+            site_title=args.site_title if args.provider == "openrouter" else None,
+            provider=args.provider,
+            tools_mode="auto",
+        )
+        print(answer)
     finally:
         mcp.close()
 
