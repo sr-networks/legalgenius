@@ -28,26 +28,46 @@ LegalGenius combines a comprehensive corpus of German legal documents with an in
 - ripgrep (`rg`) installed and available in PATH
 - An API key for your chosen LLM provider
 
-### Installation
+### Quick Start Guide
 
-1. Clone the repository:
+**1. Clone and setup:**
 ```bash
 git clone <repository-url>
 cd legalgenius
-```
-
-2. Set up the Python environment:
-```bash
 make venv
 make dev
-```
-
-3. Set up the web interface:
-```bash
 make web-install
 ```
 
-4. Configure your LLM provider by setting environment variables:
+**2. Configure LLM provider** (choose one):
+```bash
+# Nebius (default)
+export LLM_PROVIDER="nebius"
+export NEBIUS_API_KEY="your-api-key"
+export NEBIUS_MODEL="zai-org/GLM-4.5"
+
+# OR OpenRouter
+export LLM_PROVIDER="openrouter"
+export OPENROUTER_API_KEY="your-api-key"
+
+# OR Ollama (local)
+export LLM_PROVIDER="ollama"
+```
+
+**3. Start the application:**
+```bash
+# Terminal 1: API server
+make api
+
+# Terminal 2: Frontend server
+make web-dev
+
+# Open http://localhost:5173 in your browser
+```
+
+### Detailed Configuration
+
+**Environment Variables:**
 
 **For Nebius (default):**
 ```bash
@@ -73,24 +93,39 @@ export OLLAMA_MODEL="qwen3:4b"  # optional
 
 #### Web Interface (Recommended)
 
-1. Start the API server:
+**First time setup:**
+```bash
+# Setup Python environment (if not done already)
+make venv
+make dev
+
+# Setup Node.js environment and install dependencies
+make web-install
+```
+
+**Starting the application:**
+
+1. **Terminal 1**: Start the API server:
 ```bash
 make api
 ```
 
-2. In a new terminal, start the web development server:
+2. **Terminal 2**: Start the web development server:
 ```bash
 make web-dev
 ```
 
-3. Open your browser to `http://localhost:5173`
+3. **Open your browser** to `http://localhost:5173`
+
+**Services running:**
+- Frontend: http://localhost:5173 (React/Vite dev server)
+- Backend API: http://localhost:8000 (FastAPI server)
 
 The web interface provides:
-- Real-time streaming responses
-- Tool usage visualization
-- Model configuration
-- Chat history
-- Session management
+- Clean, modern interface for legal questions
+- Real-time responses from the AI system
+- Direct access to German legal document corpus
+- Error handling and loading states
 
 #### Command Line Interface
 
@@ -246,27 +281,40 @@ legalgenius/
 
 ### Development Workflow
 
+**Daily development routine:**
+```bash
+# Terminal 1: Start API server
+make api
+
+# Terminal 2: Start frontend dev server
+make web-dev
+
+# Open browser to http://localhost:5173
+```
+
+**Individual service development:**
+
 1. **Frontend Development**: 
    ```bash
-   make web-dev  # Start React dev server with hot reload
+   make web-dev  # Start React dev server with hot reload on port 5173
    ```
 
 2. **Backend Development**:
    ```bash
-   make api      # Start FastAPI server with auto-reload
+   make api      # Start FastAPI server with auto-reload on port 8000
    ```
 
-3. **Full Stack Development**:
+3. **CLI Testing**:
    ```bash
-   # Terminal 1: API server
-   make api
-   
-   # Terminal 2: Frontend dev server  
-   make web-dev
-   
-   # Terminal 3: Test CLI (optional)
-   make client q="test query"
+   make client q="test query"  # Test the CLI interface directly
    ```
+
+**Troubleshooting:**
+
+- **Dependencies not installed**: Run `make web-install` to install Node.js dependencies
+- **Port conflicts**: Frontend uses 5173, API uses 8000
+- **API not responding**: Check if backend is running with `curl http://localhost:8000/health`
+- **Frontend not loading**: Check browser console (F12) for errors
 
 ### Adding New Documents
 

@@ -1,14 +1,17 @@
 import os
+import json
+import time
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Generator, List
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from openai import OpenAI
 
 # Reuse existing agent implementation
-from client.agent_cli import MCPClient, run_agent, load_config
+from client.agent_cli import MCPClient, run_agent, load_config, _build_tools_spec, SYSTEM_PROMPT
 
 app = FastAPI(title="LegalGenius API", version="0.1.0")
 
@@ -232,3 +235,259 @@ def batch(req: BatchAskRequest) -> Dict[str, Any]:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class StreamingMCPClient(MCPClient):
+    """MCP Client that can yield tool events for streaming"""
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.tool_events = []
+        
+    def call_tool(self, tool: str, args: Dict[str, Any]) -> Dict[str, Any]:
+        # Emit tool start event
+        start_time = time.time()
+        self.tool_events.append({
+            'type': 'tool_start',
+            'tool': tool,
+            'args': args,
+            'timestamp': start_time
+        })
+        
+        # Call the actual tool
+        result = super().call_tool(tool, args)
+        
+        # Emit tool complete event
+        self.tool_events.append({
+            'type': 'tool_complete',
+            'tool': tool,
+            'args': args,
+            'result': result,
+            'timestamp': start_time
+        })
+        
+        return result
+    
+    def get_and_clear_events(self) -> List[Dict[str, Any]]:
+        events = self.tool_events.copy()
+        self.tool_events.clear()
+        return events
+
+
+def stream_agent_response(
+    query: str,
+    provider: str,
+    model: str,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None
+) -> Generator[str, None, None]:
+    """Stream agent response with real-time tool usage"""
+    
+    # Set up MCP client
+    mcp = StreamingMCPClient(server_cmd=None, env=os.environ.copy())
+    
+    try:
+        # Set up LLM client
+        llm = _resolve_llm(provider=provider, model_override=model)
+        client = llm["client"]
+        resolved_model = llm["model"]
+        referer = llm.get("referer")
+        site_title = llm.get("site_title")
+        
+        # Send initial status
+        yield f"data: {json.dumps({'type': 'thinking', 'message': 'Analysiere die Frage und plane die Suche...', 'timestamp': time.time()})}\n\n"
+        
+        # Set up tools and messages
+        tools = _build_tools_spec()
+        extra_headers = {}
+        if referer:
+            extra_headers["HTTP-Referer"] = referer
+        if site_title:
+            extra_headers["X-Title"] = site_title
+            
+        # Dispatcher functions (copied from agent_cli.py)
+        def dispatch_file_search(query: str, glob: Optional[str] = None, max_results: Optional[int] = None) -> str:
+            res = mcp.call_tool("file_search", {
+                "query": query,
+                "glob": glob or CFG.get("glob", "**/*.{txt,md}"),
+                "max_results": max_results or CFG.get("max_results", 50),
+            })
+            return json.dumps(res, ensure_ascii=False)
+
+        def dispatch_search_rg(query: str, file_list: Optional[List[str]] = None, max_results: Optional[int] = None, context_lines: Optional[int] = None) -> str:
+            res = mcp.call_tool("search_rg", {
+                "query": query,
+                "file_list": file_list,
+                "max_results": max_results or 20,
+                "context_lines": context_lines or 2,
+            })
+            return json.dumps(res, ensure_ascii=False)
+
+        def dispatch_read_file_range(path: str, start: int, end: int, context: Optional[int] = None, max_lines: Optional[int] = None) -> str:
+            res = mcp.call_tool("read_file_range", {
+                "path": path,
+                "start": int(start),
+                "end": int(end),
+                "context": context or CFG.get("context_bytes", 300),
+                "max_lines": max_lines or 20,
+            })
+            return json.dumps(res, ensure_ascii=False)
+
+        DISPATCH: Dict[str, Any] = {
+            "file_search": dispatch_file_search,
+            "search_rg": dispatch_search_rg,  
+            "read_file_range": dispatch_read_file_range,
+        }
+        
+        messages: List[Dict[str, Any]] = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": f"Question: {query}"},
+        ]
+        
+        steps = 0
+        max_steps = 25  # Reduced for streaming
+        
+        while steps < max_steps:
+            yield f"data: {json.dumps({'type': 'step', 'message': f'Schritt {steps + 1}: Verarbeite Anfrage...', 'timestamp': time.time()})}\n\n"
+            
+            used_any_tool = any(m.get("role") == "tool" for m in messages)
+            tool_choice_val = "auto" if used_any_tool else "required" if provider != "ollama" else "auto"
+            
+            steps += 1
+            
+            try:
+                create_kwargs = dict(
+                    model=resolved_model,
+                    messages=messages,
+                    tools=tools,
+                    tool_choice=tool_choice_val,
+                    extra_headers=extra_headers or None,
+                    timeout=30
+                )
+                
+                resp = client.chat.completions.create(**create_kwargs)
+                
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'message': f'LLM Fehler: {str(e)}', 'timestamp': time.time()})}\n\n"
+                return
+            
+            # Process response
+            if not getattr(resp, "choices", None) or not resp.choices:
+                time.sleep(0.2)
+                continue
+                
+            msg = resp.choices[0].message
+            out_text = getattr(msg, "content", None) or ""
+            tool_calls = getattr(msg, "tool_calls", None)
+            
+            # Handle function call format
+            fc = getattr(msg, "function_call", None)
+            if fc and not tool_calls:
+                tool_calls = [{
+                    "id": "fc_1",
+                    "type": "function", 
+                    "function": {"name": fc.name, "arguments": fc.arguments or "{}"},
+                }]
+                
+            if tool_calls:
+                # Stream tool thinking
+                for tc in tool_calls:
+                    tool_name = tc.function.name
+                    try:
+                        args = json.loads(tc.function.arguments or "{}")
+                    except:
+                        args = {}
+                        
+                    yield f"data: {json.dumps({'type': 'tool_thinking', 'message': f'Verwende {tool_name}...', 'tool': tool_name, 'args': args, 'timestamp': time.time()})}\n\n"
+                
+                # Build assistant message  
+                assistant_msg: Dict[str, Any] = {
+                    "role": "assistant",
+                    "content": out_text or "",
+                    "tool_calls": [],
+                }
+                
+                for tc in tool_calls:
+                    args_val = getattr(tc.function, "arguments", "")
+                    if not isinstance(args_val, str):
+                        try:
+                            args_val = json.dumps(args_val, ensure_ascii=False)
+                        except Exception:
+                            args_val = "{}"
+                    assistant_msg["tool_calls"].append({
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tc.function.name, "arguments": args_val},
+                    })
+                messages.append(assistant_msg)
+                
+                # Execute tools and stream events
+                for tc in tool_calls:
+                    name = tc.function.name
+                    try:
+                        args = json.loads(tc.function.arguments or "{}")
+                    except Exception:
+                        args = {}
+                    fn = DISPATCH.get(name)
+                    if not fn:
+                        result_text = json.dumps({"error": f"Unknown tool: {name}"}, ensure_ascii=False)
+                    else:
+                        try:
+                            result_text = fn(**args)
+                            
+                            # Stream tool events
+                            events = mcp.get_and_clear_events()
+                            for event in events:
+                                yield f"data: {json.dumps({'type': 'tool_event', 'event': event, 'timestamp': time.time()})}\n\n"
+                                
+                        except Exception as e:
+                            result_text = json.dumps({"error": str(e)}, ensure_ascii=False)
+                            yield f"data: {json.dumps({'type': 'tool_event', 'event': {'type': 'tool_error', 'tool': name, 'error': str(e)}, 'timestamp': time.time()})}\n\n"
+                            
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": result_text,
+                    })
+                continue
+                
+            # Final response
+            final_answer = msg.content or ""
+            yield f"data: {json.dumps({'type': 'final_answer', 'message': final_answer, 'timestamp': time.time()})}\n\n"
+            break
+            
+        if steps >= max_steps:
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Maximale Anzahl Schritte erreicht', 'timestamp': time.time()})}\n\n"
+            
+    except Exception as e:
+        yield f"data: {json.dumps({'type': 'error', 'message': f'Systemfehler: {str(e)}', 'timestamp': time.time()})}\n\n"
+    finally:
+        mcp.close()
+        
+    yield f"data: {json.dumps({'type': 'complete', 'timestamp': time.time()})}\n\n"
+
+
+@app.post("/stream")
+def stream_ask(req: AskRequest):
+    """Streaming endpoint for real-time agent responses"""
+    def event_publisher():
+        try:
+            for event in stream_agent_response(
+                query=req.query,
+                provider=req.provider or RESOLVED_PROVIDER,
+                model=req.model or RESOLVED_MODEL
+            ):
+                yield event
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': f'Stream error: {str(e)}', 'timestamp': time.time()})}\n\n"
+    
+    return StreamingResponse(
+        event_publisher(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Content-Type",
+        }
+    )

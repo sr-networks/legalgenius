@@ -185,22 +185,22 @@ SYSTEM_PROMPT = (
 )
 
 
-def summarize_files(files: List[str], limit: int = 20) -> str:
-    if not files:
-        return "No files."
-    return "Top files:\n" + "\n".join(f"- {p}" for p in files[:limit])
+#def summarize_files(files: List[str], limit: int = 20) -> str:
+#    if not files:
+#        return "No files."
+#    return "Top files:\n" + "\n".join(f"- {p}" for p in files[:limit])
 
 
-def summarize_hits(hits: List[Dict[str, Any]], limit: int = 5) -> str:
-    if not hits:
-        return "No hits."
-    lines: List[str] = []
-    for h in hits[:limit]:
-        path = h.get("path")
-        ln = h.get("lines", {}).get("line_number")
-        text = (h.get("lines", {}).get("text") or "").strip()
-        lines.append(f"- {path}#L{ln}: {text[:180]}")
-    return "Top hits:\n" + "\n".join(lines)
+#def summarize_hits(hits: List[Dict[str, Any]], limit: int = 5) -> str:
+#    if not hits:
+#        return "No hits."
+#    lines: List[str] = []
+#    for h in hits[:limit]:
+#        path = h.get("path")
+#        ln = h.get("lines", {}).get("line_number")
+#        text = (h.get("lines", {}).get("text") or "").strip()
+#        lines.append(f"- {path}#L{ln}: {text[:180]}")
+#    return "Top hits:\n" + "\n".join(lines)
 
 
 # Responses API tools spec for function-calling
@@ -344,7 +344,23 @@ def run_agent(
     max_steps = 50  # Further reduced to prevent hanging
     while True:
         if steps >= max_steps:
-            return "Konnte keine zufriedenstellende Antwort finden."
+            # Provide fallback answer based on LLM knowledge with clear disclaimer
+            fallback_messages = [
+                {"role": "system", "content": "Du bist ein Experte für deutsches Recht. Beantworte die folgende Frage basierend auf deinem allgemeinen Rechtswissen. WICHTIG: Beginne deine Antwort mit einem deutlichen Hinweis, dass diese Antwort NICHT auf spezifischen Rechtsquellen oder aktuellen Gesetzen basiert, sondern auf allgemeinem Rechtswissen."},
+                {"role": "user", "content": f"Frage: {query}"}
+            ]
+            try:
+                fallback_resp = client.chat.completions.create(
+                    model=model,
+                    messages=fallback_messages,
+                    temperature=0.0,
+                    extra_headers=extra_headers or None,
+                    max_tokens=800,
+                )
+                fallback_answer = fallback_resp.choices[0].message.content or ""
+                return f"⚠️ **HINWEIS: Diese Antwort basiert NICHT auf spezifischen Rechtsquellen, sondern auf allgemeinem Rechtswissen, da die maximale Anzahl von Rechercheschritten erreicht wurde.**\n\n{fallback_answer}"
+            except Exception as e:
+                return f"Konnte keine zufriedenstellende Antwort finden. Die maximale Anzahl von Rechercheschritten wurde erreicht und auch die Fallback-Antwort konnte nicht generiert werden: {e}"
         print("\nSTEP", steps)
         used_any_tool = any(m.get("role") == "tool" for m in messages)
         # Ollama's OpenAI-compatible API may not support non-standard values like "required".
