@@ -229,160 +229,233 @@ def _parse_boolean_query_to_dnf(query: str) -> tuple[bool, List[List[str]]]:
     return (used_boolean, dnf)
 
 
+def nearest_header(lines: List[str], start_index: int) -> str | None:
+    """Walk upward to find the nearest preceding Markdown header."""
+    for i in range(start_index, -1, -1):
+        if re.match(r"^\s{0,3}#{1,6}\s+\S", lines[i]):
+            return lines[i].strip()
+    return None
+
+
 def search_rg(
     query: str,
     file_list: List[str] | None = None,
     max_results: int | None = None,
-    context_bytes: int | None = None,
     context_lines: int | None = None,
+    regex: bool = False,
+    case_sensitive: bool = False,
 ) -> dict:
-    """Search for a pattern using ripgrep and return structured matches.
+    """Search for a pattern using ripgrep and return structured matches with context.
 
     Parameters:
     - query: String pattern passed to ripgrep
-    - file_list: Optional list of relative file paths to restrict search to
-      specific files. When omitted or empty, the entire corpus is searched
-      using the default glob from configuration.
+    - file_list: Optional list of relative file paths to restrict search
     - max_results: Optional cap on number of matches (defaults to 20)
-    - context_bytes: Optional number of extra bytes to include on both sides
-      of each match in a preview snippet (takes precedence over lines)
-    - context_lines: Optional number of extra lines to include before and after
-      the match in a preview snippet (used only if context_bytes is not set)
+    - context_lines: Number of context lines around each match (default 2)
+    - regex: Whether to treat query as regex (default False)
+    - case_sensitive: Whether search is case sensitive (default False)
 
-    Returns: { "hits": [ { path, lines: {text, line_number}, byte_range: [start, end] } ] }
-
-    Notes:
-    - Requires ripgrep (command "rg") on PATH. There is no Python fallback.
-    - To retrieve a custom preview, pass either context_bytes or context_lines.
-      If neither is provided, only the matching line is returned.
+    Returns: { "matches": [ { file, line, text, context, section } ] }
     """
-    # Support boolean query with AND/OR and parentheses at line scope
-    use_pcre = False
-    pattern = query
-    used_boolean, dnf = _parse_boolean_query_to_dnf(query)
-    if used_boolean and dnf:
-        use_pcre = True
-        # Build alternation of lookahead conjunctions
-        conj_patterns: List[str] = []
-        for conj in dnf:
-            lookaheads = "".join(f"(?=.*{re.escape(term)})" for term in conj if term)
-            conj_patterns.append(lookaheads + ".*")
-        pattern = "|".join(conj_patterns) if conj_patterns else pattern
     max_results = 20 if (max_results is None) else int(max_results)
-
+    context_lines = 2 if (context_lines is None) else int(context_lines)
+    
     rg_path = shutil.which("rg")
-    hits: List[dict] = []
     if not rg_path:
-        raise RuntimeError(
-            "ripgrep (rg) is required for search_rg but was not found on PATH. "
-            "Please install ripgrep and ensure 'rg' is available."
-        )
+        return {"error": "ripgrep (rg) not found on PATH", "matches": []}
 
-    # Use ripgrep JSON
+    # Handle Boolean OR queries by converting to regex
+    search_pattern = query
+    if " OR " in query.upper():
+        # Convert "term1 OR term2" to regex alternation "term1|term2"
+        parts = [part.strip() for part in re.split(r'\s+OR\s+', query, flags=re.IGNORECASE)]
+        if not regex:
+            # Escape regex special chars for literal search
+            parts = [re.escape(part) for part in parts]
+        search_pattern = "|".join(parts)
+        regex = True  # Force regex mode for OR queries
+    
+    # Build ripgrep command
     args = [
         rg_path,
-        "--json",
-        "--line-number",
+        "--no-heading",
+        "--line-number", 
         "--with-filename",
-        "--color=never",
+        f"-C{context_lines}",
+        "--max-count", str(max_results),
+        "--json",
+        "--color", "never",
     ]
-    if use_pcre:
-        args.append("-P")
-    # If file_list provided, validate and pass paths directly to ripgrep
-    search_paths: List[str]
+    
+    if not case_sensitive:
+        args.append("-i")
+    if regex:
+        args.append("-P")  # Use Perl regex for alternation
+    else:
+        args.append("-F")  # Fixed string search
+        
+    # Determine search files
+    search_files: List[Path] = []
     if file_list:
-        validated: List[str] = []
         for rel in file_list:
             try:
                 abs_p = _sandbox.resolve_inside(rel)
-            except PermissionError:
+                if abs_p.is_file() and abs_p.suffix.lower() in ALLOWED_EXTENSIONS:
+                    # Direct file
+                    search_files.append(abs_p)
+                elif abs_p.is_dir():
+                    # Directory - search all files within
+                    for p in abs_p.rglob("*"):
+                        if p.is_file() and p.suffix.lower() in ALLOWED_EXTENSIONS:
+                            search_files.append(p)
+                elif rel == "." or rel == "./":
+                    # Explicit request for entire corpus
+                    for p in _sandbox.root.rglob("*"):
+                        if p.is_file() and p.suffix.lower() in ALLOWED_EXTENSIONS:
+                            search_files.append(p)
+                else:
+                    # Handle glob patterns like 'urteile_markdown_by_year/*.md'
+                    if "*" in rel or "?" in rel:
+                        for p in _sandbox.root.glob(rel):
+                            if p.is_file() and p.suffix.lower() in ALLOWED_EXTENSIONS:
+                                search_files.append(p)
+            except (PermissionError, OSError):
                 continue
-            if abs_p.suffix.lower() not in ALLOWED_EXTENSIONS:
-                continue
-            validated.append(Path(rel).as_posix())
-        search_paths = validated or ["."]
-        args += [pattern, *search_paths]
     else:
-        # Default: search corpus via configured glob
-        args += [
-            "-g",
-            _config.glob,
-            pattern,
-            ".",
-        ]
-    stream = _rg_json_stream(args)
-
-    for item in stream:
-        if item.get("type") != "match":
-            continue
-        data = item.get("data", {})
-        path_text = data.get("path", {}).get("text")
-        if not path_text:
-            continue
-        # security: ensure within sandbox and allowed extension
-        rel_path = Path(path_text)
-        try:
-            abs_path = _sandbox.resolve_inside(rel_path.as_posix())
-        except PermissionError:
-            continue
-        if abs_path.suffix.lower() not in ALLOWED_EXTENSIONS:
-            continue
-
-        line_number = int(data.get("line_number", 0))
-        line_text = data.get("lines", {}).get("text", "")
-        submatches = data.get("submatches", [])
-        if not submatches:
-            continue
-        first_sm = submatches[0]
-        sm_start = int(first_sm.get("start", 0))
-        sm_end = int(first_sm.get("end", sm_start))
-
-        line_start_abs = _sandbox.line_start_offset(abs_path, line_number)
-        byte_range = [line_start_abs + sm_start, line_start_abs + sm_end]
-
-        hit: dict = {
-            "path": rel_path.as_posix(),
-            "lines": {"text": line_text, "line_number": line_number},
-            "byte_range": byte_range,
-        }
-
-        # Optional preview context
-        if context_bytes and context_bytes > 0:
-            # Use internal reader to generate a bytes-based preview
-            preview = read_file_range(
-                path=hit["path"],
-                start=byte_range[0],
-                end=byte_range[1],
-                context=int(context_bytes),
-            )
-            hit["preview"] = {
-                "mode": "bytes",
-                "start": preview["start"],
-                "end": preview["end"],
-                "text": preview["text"],
-            }
-        elif context_lines and context_lines > 0:
-            # Build a line-based preview around the match
+        # Fallback: search all files in sandbox
+        for p in _sandbox.root.rglob("*"):
+            if p.is_file() and p.suffix.lower() in ALLOWED_EXTENSIONS:
+                search_files.append(p)
+    
+    if not search_files:
+        return {"matches": []}
+        
+    args.append(search_pattern)
+    args += [str(f) for f in search_files]
+    
+    # Run ripgrep
+    proc = subprocess.run(args, capture_output=True, text=True, cwd=_sandbox.root)
+    if proc.returncode not in (0, 1):  # 1 means "no matches"
+        return {"error": proc.stderr.strip() or "ripgrep error", "matches": []}
+    
+    # Parse JSON output
+    raw_events = []
+    for line in proc.stdout.splitlines():
+        if line.strip():
             try:
-                file_text = abs_path.read_text(encoding="utf-8", errors="replace")
-                all_lines = file_text.splitlines(keepends=True)
-                start_idx = max(0, line_number - 1 - int(context_lines))
-                end_idx = min(len(all_lines), line_number + int(context_lines))
-                preview_text = "".join(all_lines[start_idx:end_idx])
-                hit["preview"] = {
-                    "mode": "lines",
-                    "start_line": start_idx + 1,
-                    "end_line": end_idx,
-                    "text": preview_text,
-                }
-            except Exception:
-                # Ignore preview errors and still return the hit
-                pass
+                raw_events.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
 
-        hits.append(hit)
-        if len(hits) >= max_results:
-            break
-    return {"hits": hits}
+    # Process events to build matches with context
+    file_cache: Dict[str, List[str]] = {}
+    blocks: Dict[str, Dict[int, Dict[str, any]]] = {}
+    
+    # Group events by file and line
+    for ev in raw_events:
+        t = ev.get("type")
+        data = ev.get("data", {})
+        if t == "match":
+            path = data.get("path", {}).get("text", "")
+            line_num = data.get("line_number", 0)
+            text = data.get("lines", {}).get("text", "")
+            blocks.setdefault(path, {}).setdefault(line_num, {
+                "file": path,
+                "line": line_num,
+                "text": text.rstrip("\n"),
+                "context": {}
+            })
+        elif t == "context":
+            path = data.get("path", {}).get("text", "")
+            line_num = data.get("line_number", 0)
+            text = data.get("lines", {}).get("text", "")
+            blocks.setdefault(path, {})[line_num] = {
+                "file": path,
+                "line": line_num,
+                "text": text.rstrip("\n"),
+                "is_context_only": True
+            }
+    
+    matches: List[Dict[str, any]] = []
+    
+    # Build matches with context windows
+    for path, per_file in blocks.items():
+        if not per_file:
+            continue
+            
+        # Load file for header detection
+        if path not in file_cache:
+            try:
+                abs_path = _sandbox.resolve_inside(path)
+                with abs_path.open("r", encoding="utf-8", errors="ignore") as fh:
+                    file_cache[path] = fh.readlines()
+            except Exception:
+                file_cache[path] = []
+        
+        # Process actual matches (not context-only lines)
+        match_lines = [ln for ln, rec in per_file.items() if not rec.get("is_context_only")]
+        match_lines.sort()
+        
+        for ln in match_lines:
+            # Build context window
+            start = max(1, ln - context_lines)
+            end = ln + context_lines
+            context_rows = []
+            
+            for j in range(start, end + 1):
+                if j in per_file:
+                    txt = per_file[j].get("text", "")
+                else:
+                    # Fallback to file cache
+                    lines = file_cache.get(path, [])
+                    idx = j - 1
+                    if 0 <= idx < len(lines):
+                        txt = lines[idx].rstrip("\n")
+                    else:
+                        continue
+                context_rows.append({"line": j, "text": txt})
+            
+            # Find nearest header
+            section = None
+            lines_cache = file_cache.get(path, [])
+            if lines_cache:
+                section = nearest_header(lines_cache, ln - 2)  # 0-based index
+            
+            # Highlight query in main text
+            main_text = per_file[ln]["text"]
+            try:
+                if regex:
+                    pat = re.compile(query, 0 if case_sensitive else re.IGNORECASE)
+                else:
+                    pat = re.compile(re.escape(query), 0 if case_sensitive else re.IGNORECASE)
+                hl_text = pat.sub(lambda m: f"**{m.group(0)}**", main_text)
+            except re.error:
+                hl_text = main_text
+            
+            # Convert absolute path to relative
+            try:
+                abs_path = _sandbox.resolve_inside(path)
+                rel_path = abs_path.relative_to(_sandbox.root).as_posix()
+            except Exception:
+                rel_path = path
+            
+            # Calculate byte range for this line
+            line_start_byte = _sandbox.line_start_offset(abs_path, ln)
+            line_end_byte = line_start_byte + len(main_text.encode("utf-8"))
+            
+            matches.append({
+                "file": rel_path,
+                "line": ln,
+                "text": hl_text,
+                "context": context_rows,
+                "section": section,
+                "byte_range": [line_start_byte, line_end_byte]
+            })
+            
+            if len(matches) >= max_results:
+                break
+    
+    return {"matches": matches[:max_results]}
 
 
 def file_search(
@@ -432,7 +505,14 @@ def file_search(
         if used_bool and dnf2:
             term_sets = dnf2
         else:
-            term_sets = [[query]]
+            # Auto-detect multiple keywords and treat as AND conjunction
+            words = query.split()
+            if len(words) > 1:
+                # Multiple words - treat as AND conjunction
+                term_sets = [words]
+            else:
+                # Single word or phrase
+                term_sets = [[query]]
     for file_path in _sandbox.root.rglob("*"):
         if not file_path.is_file() or file_path.suffix.lower() not in ALLOWED_EXTENSIONS:
             continue

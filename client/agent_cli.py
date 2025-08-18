@@ -62,21 +62,33 @@ class MCPClient:
             if tool == "read_file_range":
                 path = (result or {}).get("path") or args.get("path")
                 text = (result or {}).get("text", "")
-                return f"tool: {tool}\npath: {path}\nresult: {text}"
+                ln = args.get("start")
+                le = args.get("end")
+                return f"tool: {tool}\npath: {path}\nresult: {text}\nline: {ln}-{le}"
             if tool == "search_rg":
-                hits = (result or {}).get("hits", [])
+                matches = (result or {}).get("matches", [])
                 q = args.get("query")
-                lines: List[str] = [f"tool: {tool}", f"query: {q}", f"hits: {len(hits)}"]
-                for h in hits[:5]:
-                    p = h.get("path")
-                    ln = h.get("lines", {}).get("line_number")
-                    tx = (h.get("lines", {}).get("text") or "").strip()
-                    lines.append(f"- {p}#L{ln}: {tx}")
+                f = args.get("file_list")
+                l = args.get("line")
+                lines: List[str] = [f"tool: {tool}", f"query: {q}", f"file_list: {f}", f"matches: {len(matches)}, line: {l}"]
+                for m in matches[:5]:
+                    p = m.get("file")
+                    ln = m.get("line")
+                    txt = m.get("text", "")[:100]
+                    sec = m.get("section", "")
+                    ctx_len = len(m.get("context", []))
+                    byte_range = m.get("byte_range", [])
+                    lines.append(f"  {p}:{ln} [{ctx_len} context lines] {txt}")
+                    if sec:
+                        lines.append(f"    Section: {sec[:80]}")
+                    if byte_range:
+                        lines.append(f"    Byte range: {byte_range[0]}-{byte_range[1]}")
                 return "\n".join(lines)
             if tool in ("file_search", "list_paths"):
                 files = (result or {}).get("files", [])
                 q = args.get("query") or args.get("subdir")
-                header = f"tool: {tool}\nquery: {q}\nfiles ({len(files)}):"
+                g = args.get("glob")
+                header = f"tool: {tool}\nquery: {q}\nglob: {g}\nfiles ({len(files)}):"
                 body = "\n".join(files[:20])
                 return f"{header}\n{body}" if files else header
             return f"tool: {tool}\n" + json.dumps(result, ensure_ascii=False)
@@ -145,7 +157,7 @@ TOOL_SUMMARY = (
     "Verfügbare Werkzeuge (Function Calling):\n"
     "1) file_search: Argumente {query: Zeichenkette mit AND/OR und Klammern, glob?: Zeichenkette, max_results?: Zahl}. Rückgabe {files: Zeichenkette[]}.\n"
 #    "2) list_paths: Argumente {subdir?: Zeichenkette}. Rückgabe {files: Zeichenkette[]} der erlaubten Dateien unterhalb von subdir. Für das Wurzelverzeichnis verwende '.'. Unterverzeichnis gesetze enthält die Bundesgesetze, urteile_markdown_by_year die Rechtsprechung.\n"
-    "3) search_rg (ripgrep): Argumente {query: Zeichenkette, file_list?: Zeichenkette[], max_results?: Zahl, context_lines?: Zahl}. Rückgabe {hits: [...]}. Nur ein Keyword pro Zeichenkette.\n"
+    "3) search_rg (ripgrep): Argumente {query: Zeichenkette, file_list?: Zeichenkette[], max_results?: Zahl, context_lines?: Zahl, regex?: bool, case_sensitive?: bool}. Rückgabe {matches: [{file, line, text, context, section, byte_range}]}. Liefert strukturierte Treffer mit Kontext, nächstem Header und Byte-Positionen für read_file_range.\n"
     "4) read_file_range: Argumente {path, start, end, context?, max_lines?}. Rückgabe: Textausschnitt um den Treffer (max. 20 Zeilen standardmäßig).\n"
 )
 
@@ -157,13 +169,16 @@ SYSTEM_PROMPT = (
     "- Der Rechtskorpus besteht aus allen Gesetzen in Deutschland."
     "- Sie sind in mehreren Unterordnern abgelegt, auf die du mit den Werkzeugen zugreifen kannst."
 #    "- Nutze zuerst list_paths, um verfügbare Dateien zu sichten"abs
-    "- Werwende dann file_search zur Vorauswahl; nutze anschließend search_rg für präzise Fundstellen."
+    "- Verwende file_search und search_rg für präzise Fundstellen. Für file_search sind AND und OR Verknüpfungen mehrerer Suchbegriffe möglich."
     "- Überlege, wie du die Ordnerstruktur, Gesetzesnamen und Dateinamen ausnutzen kannst."
     "- Reflektiere die Ergebnisse und ob sie für eine Antwort ausreichen."
-    "- Falls nicht ausreichend, verfeinere oder erweitere die Suche, erhöhe ggf. max_results/context_lines und versuche die Werkzeuge erneut.\n"
-    "- Verwende keine Abkürzungen oder Akronyme in Suchanfragen (z. B. 'Bürgerliches Gesetzbuch' statt 'BGB')."
+    "- Falls nicht ausreichend, erweitere die Suche, erhöhe ggf. max_results/context_lines und versuche die Werkzeuge erneut.\n"
+    "- Bei Gesetzen: Verwende IMMER OR-Verknüpfungen für Vollname und Abkürzung (z.B. 'Bürgerliches Gesetzbuch OR BGB', 'Rechtsanwaltsvergütungsgesetz OR RVG')."
     "- Suche auch mit search_rg in der neueren Rechtsprechung im Ordner urteile_markdown_by_year."
+    "- WICHTIG: Bei Testament/Erbrecht-Fragen suche IMMER auch nach 'Testament', 'gemeinschaftlich', 'Geschäftsgebühr', 'RVG' in urteile_markdown_by_year/."
     "- Falls search_rg keine Ergebnisse liefert, vereinfache oder erweitere die Suchbegriffe."
+    "- Verwende mehrere Suchstrategien: Einzelwörter, exakte Phrasen, und verwandte Begriffe."
+    "- Nutze search_rg Ergebnisse: Die byte_range Werte können direkt an read_file_range weitergegeben werden für präzise Textausschnitte."
     "- Wenn ausreichend, erzeuge final_answer mit kurzer Textstelle und Zitation (Pfad + Zeilennummer).\n"
     "- Bei Abbruch wegen Limit: final_answer mit kurzer Erklärung, was versucht wurde und warum keine Antwort gefunden wurde.\n\n"
     + TOOL_SUMMARY
@@ -231,11 +246,11 @@ def _build_tools_spec() -> List[Dict[str, Any]]:
                     "type": "object",
                     "properties": {
                         "query": {"type": "string", "description": "Single keyword or phrase"},
-                        "file_list": {"type": "array", "items": {"type": "string"}, "description": "Optional file list to narrow search"},
+                        "file_list": {"type": "array", "items": {"type": "string"}, "description": "File patterns: specific files, folders (e.g. 'gesetze/', 'urteile_markdown_by_year/'), or '.' for entire corpus"},
                         "max_results": {"type": "integer", "minimum": 10, "description": "Maximum number of results"},
                         "context_lines": {"type": "integer", "minimum": 1, "maximum": 10, "description": "Number of context lines"},
                     },
-                    "required": ["query"],
+                    "required": ["query","file_list"],
                 },
             },
         },
@@ -250,8 +265,8 @@ def _build_tools_spec() -> List[Dict[str, Any]]:
                         "path": {"type": "string"},
                         "start": {"type": "integer", "minimum": 0},
                         "end": {"type": "integer", "minimum": 0},
-                        "context": {"type": "integer", "minimum": 0},
-                        "max_lines": {"type": "integer", "description": "Maximum number of lines to return (default 20)"},
+#                        "context": {"type": "integer", "minimum": 0},
+#                        "max_lines": {"type": "integer", "description": "Maximum number of lines to return (default 20)"},
                     },
                     "required": ["path", "start", "end"],
                 },
