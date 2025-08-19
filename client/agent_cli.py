@@ -157,7 +157,7 @@ TOOL_SUMMARY = (
     "Verfügbare Werkzeuge (Function Calling):\n"
     "1) file_search: Argumente {query: Zeichenkette mit AND/OR und Klammern, glob?: Zeichenkette, max_results?: Zahl}. Rückgabe {files: Zeichenkette[]}.\n"
 #    "2) list_paths: Argumente {subdir?: Zeichenkette}. Rückgabe {files: Zeichenkette[]} der erlaubten Dateien unterhalb von subdir. Für das Wurzelverzeichnis verwende '.'. Unterverzeichnis gesetze enthält die Bundesgesetze, urteile_markdown_by_year die Rechtsprechung.\n"
-    "3) search_rg (ripgrep): Argumente {query: Zeichenkette, file_list?: Zeichenkette[], max_results?: Zahl, context_lines?: Zahl, regex?: bool, case_sensitive?: bool}. Rückgabe {matches: [{file, line, text, context, section, byte_range}]}. Liefert strukturierte Treffer mit Kontext, nächstem Header und Byte-Positionen für read_file_range.\n"
+    "3) search_rg (ripgrep): Argumente {query: Schlagwort, file_list?: Zeichenkette[], max_results?: Zahl, context_lines?: Zahl, regex?: bool, case_sensitive?: bool}. Rückgabe {matches: [{file, line, text, context, section, byte_range}]}. Liefert strukturierte Treffer mit Kontext, nächstem Header und Byte-Positionen für read_file_range.\n"
     "4) read_file_range: Argumente {path, start, end, context?, max_lines?}. Rückgabe: Textausschnitt um den Treffer (max. 20 Zeilen standardmäßig).\n"
 )
 
@@ -241,14 +241,16 @@ def _build_tools_spec() -> List[Dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "search_rg",
-                "description": "Search lines using ripgrep. Optional file_list narrows search. ou MUST use exactly one keyword or phrase at a time. Never combine multiple keywords with AND/OR or regex alternations. If the user gives multiple terms, pick the single most important one (or ask the user to clarify)",
+                "description": "Search lines using ripgrep. Optional file_list narrows search. Begin with only one keyword. Refine withg multiple keywords with AND/OR or regex alternations if results are too broad. ",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "Single keyword or phrase"},
-                        "file_list": {"type": "array", "items": {"type": "string"}, "description": "File patterns: specific files, folders (e.g. 'gesetze/', 'urteile_markdown_by_year/'), or '.' for entire corpus"},
-                        "max_results": {"type": "integer", "minimum": 10, "description": "Maximum number of results"},
+                        "query": {"type": "string", "description": "Single keyword"},
+                        "file_list": {"type": "array", "items": {"type": "string"}, "description": "File patterns: specific files, folders (e.g. 'gesetze/', 'urteile_markdown_by_year/'), or './' for entire corpus"},
+                        "max_results": {"type": "integer", "minimum": 10, "description": "Maximum number of results per file"},
                         "context_lines": {"type": "integer", "minimum": 1, "maximum": 10, "description": "Number of context lines"},
+                        "regex": {"type": "boolean", "description": "Whether to treat query as regex pattern (default False)"},
+                        "case_sensitive": {"type": "boolean", "description": "Whether search is case sensitive (default False)"},
                     },
                     "required": ["query","file_list"],
                 },
@@ -302,12 +304,14 @@ def run_agent(
         })
         return json.dumps(res, ensure_ascii=False)
 
-    def dispatch_search_rg(query: str, file_list: Optional[List[str]] = None, max_results: Optional[int] = None, context_lines: Optional[int] = None) -> str:
+    def dispatch_search_rg(query: str, file_list: Optional[List[str]] = None, max_results: Optional[int] = None, context_lines: Optional[int] = None, regex: Optional[bool] = None, case_sensitive: Optional[bool] = None) -> str:
         res = mcp.call_tool("search_rg", {
             "query": query,
             "file_list": file_list,
             "max_results": max_results or 20,
             "context_lines": context_lines or 2,
+            "regex": regex or False,
+            "case_sensitive": case_sensitive or False,
         })
         return json.dumps(res, ensure_ascii=False)
 

@@ -1,4 +1,6 @@
 import React, { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 const API_BASE = "http://127.0.0.1:8000";
 
@@ -31,37 +33,485 @@ export default function App() {
     }
   }
 
-  return (
-    <div style={{ maxWidth: 900, margin: "2rem auto", fontFamily: "Inter, system-ui, Arial" }}>
-      <h1 style={{ marginBottom: 8 }}>LegalGenius</h1>
-      <p style={{ color: "#666", marginTop: 0 }}>Ask a question about German law. The backend will search the local corpus.</p>
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !loading && query.trim()) {
+      ask();
+    }
+  };
 
-      <textarea
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        rows={6}
-        style={{ width: "100%", padding: 12, fontSize: 14, lineHeight: 1.4 }}
-        placeholder="Geben Sie Ihre Frage ein…"
-      />
-      <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
-        <button onClick={ask} disabled={loading || !query.trim()} style={{ padding: "10px 16px" }}>
-          {loading ? "Bitte warten…" : "Frage stellen"}
-        </button>
-        <button onClick={() => { setQuery(""); setAnswer(null); setError(null); }} disabled={loading}>
-          Zurücksetzen
-        </button>
+  return (
+    <div style={{
+      minHeight: "100vh",
+      background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+      padding: "0",
+      fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+    }}>
+      {/* Header */}
+      <div style={{
+        background: "rgba(255, 255, 255, 0.95)",
+        backdropFilter: "blur(20px)",
+        borderBottom: "1px solid rgba(255, 255, 255, 0.2)",
+        padding: "1.5rem 0",
+        position: "sticky",
+        top: 0,
+        zIndex: 100,
+        boxShadow: "0 8px 32px rgba(0, 0, 0, 0.1)"
+      }}>
+        <div style={{
+          maxWidth: "1200px",
+          margin: "0 auto",
+          padding: "0 2rem",
+          display: "flex",
+          alignItems: "center",
+          gap: "1rem"
+        }}>
+          <div style={{
+            width: "48px",
+            height: "48px",
+            background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+            borderRadius: "12px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: "24px",
+            boxShadow: "0 4px 16px rgba(102, 126, 234, 0.3)"
+          }}>⚖️</div>
+          <div>
+            <h1 style={{
+              margin: 0,
+              fontSize: "2rem",
+              fontWeight: 700,
+              background: "linear-gradient(135deg, #2c3e50 0%, #34495e 100%)",
+              WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent",
+              letterSpacing: "-0.02em"
+            }}>LegalGenius</h1>
+            <p style={{
+              margin: "0.25rem 0 0 0",
+              color: "#64748b",
+              fontSize: "0.95rem",
+              fontWeight: 500
+            }}>Intelligente Recherche im deutschen Recht</p>
+          </div>
+        </div>
       </div>
 
-      {error && (
-        <div style={{ marginTop: 16, color: "#b00020" }}>Fehler: {error}</div>
-      )}
-
-      {answer !== null && (
-        <div style={{ marginTop: 24 }}>
-          <h3>Antwort</h3>
-          <pre style={{ whiteSpace: "pre-wrap" }}>{answer}</pre>
+      {/* Main Content */}
+      <div style={{
+        maxWidth: "1200px",
+        margin: "0 auto",
+        padding: "3rem 2rem"
+      }}>
+        {/* Query Input Card */}
+        <div style={{
+          background: "rgba(255, 255, 255, 0.95)",
+          backdropFilter: "blur(20px)",
+          borderRadius: "20px",
+          padding: "2.5rem",
+          marginBottom: "2rem",
+          boxShadow: "0 20px 40px rgba(0, 0, 0, 0.1), 0 0 0 1px rgba(255, 255, 255, 0.2)",
+          border: "1px solid rgba(255, 255, 255, 0.2)"
+        }}>
+          <div style={{ marginBottom: "1.5rem" }}>
+            <label style={{
+              display: "block",
+              marginBottom: "0.75rem",
+              fontSize: "1.1rem",
+              fontWeight: 600,
+              color: "#1e293b",
+              letterSpacing: "-0.01em"
+            }}>Ihre Rechtsfrage</label>
+            <div style={{ position: "relative" }}>
+              <textarea
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={handleKeyDown}
+                rows={5}
+                style={{
+                  width: "100%",
+                  padding: "1.25rem",
+                  fontSize: "1rem",
+                  lineHeight: 1.6,
+                  border: "2px solid #e2e8f0",
+                  borderRadius: "12px",
+                  resize: "vertical",
+                  fontFamily: "inherit",
+                  transition: "all 0.2s ease",
+                  outline: "none",
+                  background: "#ffffff",
+                  boxShadow: "0 1px 3px rgba(0, 0, 0, 0.1)"
+                }}
+                onFocus={(e) => {
+                  e.target.style.borderColor = "#667eea";
+                  e.target.style.boxShadow = "0 0 0 3px rgba(102, 126, 234, 0.1), 0 1px 3px rgba(0, 0, 0, 0.1)";
+                }}
+                onBlur={(e) => {
+                  e.target.style.borderColor = "#e2e8f0";
+                  e.target.style.boxShadow = "0 1px 3px rgba(0, 0, 0, 0.1)";
+                }}
+                placeholder="Stellen Sie hier Ihre Frage zum deutschen Recht... (⌘+Enter zum Senden)"
+              />
+              <div style={{
+                position: "absolute",
+                bottom: "12px",
+                right: "12px",
+                fontSize: "0.75rem",
+                color: "#94a3b8",
+                fontWeight: 500
+              }}>
+                {query.length}/2000
+              </div>
+            </div>
+          </div>
+          
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: "1rem"
+          }}>
+            <div style={{ display: "flex", gap: "1rem" }}>
+              <button
+                onClick={ask}
+                disabled={loading || !query.trim()}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "0.5rem",
+                  padding: "0.875rem 2rem",
+                  fontSize: "1rem",
+                  fontWeight: 600,
+                  color: "white",
+                  background: loading || !query.trim() 
+                    ? "#94a3b8" 
+                    : "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                  border: "none",
+                  borderRadius: "12px",
+                  cursor: loading || !query.trim() ? "not-allowed" : "pointer",
+                  transition: "all 0.2s ease",
+                  boxShadow: loading || !query.trim() 
+                    ? "none" 
+                    : "0 4px 16px rgba(102, 126, 234, 0.3)",
+                  transform: "translateY(0)"
+                }}
+                onMouseOver={(e) => {
+                  if (!loading && query.trim()) {
+                    (e.target as HTMLButtonElement).style.transform = "translateY(-2px)";
+                    (e.target as HTMLButtonElement).style.boxShadow = "0 8px 24px rgba(102, 126, 234, 0.4)";
+                  }
+                }}
+                onMouseOut={(e) => {
+                  (e.target as HTMLButtonElement).style.transform = "translateY(0)";
+                  (e.target as HTMLButtonElement).style.boxShadow = loading || !query.trim() 
+                    ? "none" 
+                    : "0 4px 16px rgba(102, 126, 234, 0.3)";
+                }}
+              >
+                {loading && (
+                  <div style={{
+                    width: "16px",
+                    height: "16px",
+                    border: "2px solid rgba(255, 255, 255, 0.3)",
+                    borderTop: "2px solid white",
+                    borderRadius: "50%",
+                    animation: "spin 1s linear infinite"
+                  }} />
+                )}
+                {loading ? "Recherchiere..." : "🚀 Frage stellen"}
+              </button>
+              
+              <button
+                onClick={() => { setQuery(""); setAnswer(null); setError(null); }}
+                disabled={loading}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "0.5rem",
+                  padding: "0.875rem 1.5rem",
+                  fontSize: "1rem",
+                  fontWeight: 500,
+                  color: "#64748b",
+                  background: "white",
+                  border: "2px solid #e2e8f0",
+                  borderRadius: "12px",
+                  cursor: loading ? "not-allowed" : "pointer",
+                  transition: "all 0.2s ease",
+                  opacity: loading ? 0.5 : 1
+                }}
+                onMouseOver={(e) => {
+                  if (!loading) {
+                    (e.target as HTMLButtonElement).style.borderColor = "#cbd5e1";
+                    (e.target as HTMLButtonElement).style.color = "#475569";
+                    (e.target as HTMLButtonElement).style.background = "#f8fafc";
+                  }
+                }}
+                onMouseOut={(e) => {
+                  (e.target as HTMLButtonElement).style.borderColor = "#e2e8f0";
+                  (e.target as HTMLButtonElement).style.color = "#64748b";
+                  (e.target as HTMLButtonElement).style.background = "white";
+                }}
+              >
+                🗑️ Zurücksetzen
+              </button>
+            </div>
+            
+            <div style={{
+              fontSize: "0.875rem",
+              color: "#94a3b8",
+              fontWeight: 500
+            }}>
+              ⌘+Enter zum Senden
+            </div>
+          </div>
         </div>
-      )}
+
+        {/* Loading State */}
+        {loading && (
+          <div style={{
+            background: "rgba(255, 255, 255, 0.95)",
+            backdropFilter: "blur(20px)",
+            borderRadius: "20px",
+            padding: "2.5rem",
+            marginBottom: "2rem",
+            boxShadow: "0 20px 40px rgba(0, 0, 0, 0.1)",
+            border: "1px solid rgba(255, 255, 255, 0.2)"
+          }}>
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "1.5rem"
+            }}>
+              <div style={{
+                width: "48px",
+                height: "48px",
+                border: "4px solid #e2e8f0",
+                borderTop: "4px solid #667eea",
+                borderRadius: "50%",
+                animation: "spin 1s linear infinite"
+              }} />
+              <div>
+                <h3 style={{
+                  margin: "0 0 0.5rem 0",
+                  fontSize: "1.25rem",
+                  fontWeight: 600,
+                  color: "#1e293b"
+                }}>Durchsuche Rechtsquellen...</h3>
+                <p style={{
+                  margin: 0,
+                  color: "#64748b",
+                  fontSize: "0.95rem"
+                }}>Dies kann einige Momente dauern</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Error Message */}
+        {error && (
+          <div style={{
+            background: "rgba(254, 242, 242, 0.95)",
+            backdropFilter: "blur(20px)",
+            border: "1px solid #fecaca",
+            borderRadius: "16px",
+            padding: "1.5rem",
+            marginBottom: "2rem",
+            boxShadow: "0 8px 24px rgba(239, 68, 68, 0.1)"
+          }}>
+            <div style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: "1rem"
+            }}>
+              <div style={{
+                fontSize: "1.25rem",
+                color: "#dc2626"
+              }}>❌</div>
+              <div>
+                <h4 style={{
+                  margin: "0 0 0.5rem 0",
+                  fontSize: "1rem",
+                  fontWeight: 600,
+                  color: "#dc2626"
+                }}>Fehler aufgetreten</h4>
+                <p style={{
+                  margin: 0,
+                  color: "#b91c1c",
+                  fontSize: "0.95rem",
+                  lineHeight: 1.5
+                }}>{error}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Answer Card */}
+        {answer !== null && (
+          <div style={{
+            background: "rgba(255, 255, 255, 0.95)",
+            backdropFilter: "blur(20px)",
+            borderRadius: "20px",
+            overflow: "hidden",
+            boxShadow: "0 20px 40px rgba(0, 0, 0, 0.1)",
+            border: "1px solid rgba(255, 255, 255, 0.2)"
+          }}>
+            <div style={{
+              background: "linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)",
+              padding: "1.5rem 2rem",
+              borderBottom: "1px solid rgba(34, 197, 94, 0.1)"
+            }}>
+              <h3 style={{
+                margin: 0,
+                fontSize: "1.25rem",
+                fontWeight: 600,
+                color: "#166534",
+                display: "flex",
+                alignItems: "center",
+                gap: "0.75rem"
+              }}>
+                <span style={{
+                  fontSize: "1.5rem"
+                }}>📋</span>
+                Antwort
+              </h3>
+            </div>
+            <div style={{
+              padding: "2rem",
+              fontSize: "1rem",
+              lineHeight: 1.7,
+              color: "#1e293b"
+            }}>
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  h1: ({children}) => (
+                    <h1 style={{
+                      color: '#1e293b',
+                      borderBottom: '3px solid #667eea',
+                      paddingBottom: '0.75rem',
+                      marginBottom: '1.5rem',
+                      fontSize: '1.75rem',
+                      fontWeight: 700
+                    }}>{children}</h1>
+                  ),
+                  h2: ({children}) => (
+                    <h2 style={{
+                      color: '#334155',
+                      marginTop: '2rem',
+                      marginBottom: '1rem',
+                      fontSize: '1.5rem',
+                      fontWeight: 600
+                    }}>{children}</h2>
+                  ),
+                  h3: ({children}) => (
+                    <h3 style={{
+                      color: '#475569',
+                      marginTop: '1.5rem',
+                      marginBottom: '0.75rem',
+                      fontSize: '1.25rem',
+                      fontWeight: 600
+                    }}>{children}</h3>
+                  ),
+                  p: ({children}) => (
+                    <p style={{
+                      marginBottom: '1.25rem',
+                      lineHeight: 1.7
+                    }}>{children}</p>
+                  ),
+                  strong: ({children}) => (
+                    <strong style={{
+                      color: '#1e293b',
+                      fontWeight: 700
+                    }}>{children}</strong>
+                  ),
+                  em: ({children}) => (
+                    <em style={{
+                      color: '#64748b',
+                      fontStyle: 'italic'
+                    }}>{children}</em>
+                  ),
+                  code: ({children}) => (
+                    <code style={{
+                      background: '#f1f5f9',
+                      padding: '0.25rem 0.5rem',
+                      borderRadius: '6px',
+                      fontSize: '0.9rem',
+                      fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Monaco, Consolas, monospace',
+                      border: '1px solid #e2e8f0'
+                    }}>{children}</code>
+                  ),
+                  pre: ({children}) => (
+                    <pre style={{
+                      background: '#f8fafc',
+                      padding: '1.5rem',
+                      borderRadius: '12px',
+                      overflow: 'auto',
+                      border: '1px solid #e2e8f0',
+                      fontSize: '0.9rem',
+                      lineHeight: 1.6
+                    }}>{children}</pre>
+                  ),
+                  blockquote: ({children}) => (
+                    <blockquote style={{
+                      borderLeft: '4px solid #667eea',
+                      paddingLeft: '1.5rem',
+                      margin: '1.5rem 0',
+                      fontStyle: 'italic',
+                      color: '#64748b',
+                      background: '#f8fafc',
+                      padding: '1rem 1.5rem',
+                      borderRadius: '0 8px 8px 0'
+                    }}>{children}</blockquote>
+                  ),
+                  ul: ({children}) => (
+                    <ul style={{
+                      paddingLeft: '1.5rem',
+                      marginBottom: '1.25rem'
+                    }}>{children}</ul>
+                  ),
+                  ol: ({children}) => (
+                    <ol style={{
+                      paddingLeft: '1.5rem',
+                      marginBottom: '1.25rem'
+                    }}>{children}</ol>
+                  ),
+                  li: ({children}) => (
+                    <li style={{
+                      marginBottom: '0.5rem',
+                      lineHeight: 1.6
+                    }}>{children}</li>
+                  )
+                }}
+              >
+                {answer}
+              </ReactMarkdown>
+            </div>
+          </div>
+        )}
+
+        {/* Footer */}
+        <div style={{
+          textAlign: "center",
+          marginTop: "3rem",
+          color: "rgba(255, 255, 255, 0.8)",
+          fontSize: "0.9rem",
+          lineHeight: 1.6
+        }}>
+          <p style={{ margin: "0 0 0.5rem 0" }}>
+            LegalGenius durchsucht eine umfangreiche Sammlung deutscher Rechtsquellen.
+          </p>
+          <p style={{ margin: 0, fontWeight: 500 }}>
+            <strong>Hinweis:</strong> Diese Antworten dienen nur zu Informationszwecken und ersetzen keine Rechtsberatung.
+          </p>
+        </div>
+      </div>
+
+      <style>{`
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+      `}</style>
     </div>
   );
 }

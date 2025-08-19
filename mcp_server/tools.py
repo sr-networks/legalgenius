@@ -455,6 +455,20 @@ def search_rg(
             if len(matches) >= max_results:
                 break
     
+    # Sort matches to prioritize newer files (higher years first)
+    def extract_year_from_path(match):
+        """Extract year from file path for sorting, defaulting to 0 for non-year files"""
+        path = match.get("file", "")
+        # Look for patterns like "2022.md", "2021.md" in the path
+        import re
+        year_match = re.search(r'/(\d{4})\.md$', path)
+        if year_match:
+            return int(year_match.group(1))
+        # For non-year files, assign a high value to keep them at top
+        return 9999
+    
+    matches.sort(key=extract_year_from_path, reverse=True)
+    
     return {"matches": matches[:max_results]}
 
 
