@@ -347,7 +347,9 @@ def run_agent(
     steps = 0
     max_steps = 50  # Further reduced to prevent hanging
     while True:
+        print ("STEP", steps)
         if steps >= max_steps:
+
             # Provide fallback answer based on LLM knowledge with clear disclaimer
             fallback_messages = [
                 {"role": "system", "content": "Du bist ein Experte für deutsches Recht. Beantworte die folgende Frage basierend auf deinem allgemeinen Rechtswissen. WICHTIG: Beginne deine Antwort mit einem deutlichen Hinweis, dass diese Antwort NICHT auf spezifischen Rechtsquellen oder aktuellen Gesetzen basiert, sondern auf allgemeinem Rechtswissen."},
@@ -360,6 +362,7 @@ def run_agent(
                     temperature=0.0,
                     extra_headers=extra_headers or None,
                     max_tokens=800,
+                    extra_body={"chat_template_kwargs": {"enable_thinking": False}}
                 )
                 fallback_answer = fallback_resp.choices[0].message.content or ""
                 return f"⚠️ **HINWEIS: Diese Antwort basiert NICHT auf spezifischen Rechtsquellen, sondern auf allgemeinem Rechtswissen, da die maximale Anzahl von Rechercheschritten erreicht wurde.**\n\n{fallback_answer}"

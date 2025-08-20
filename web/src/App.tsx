@@ -1,6 +1,7 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import ReasoningTraceBox from "./components/ReasoningTraceBox";
 
 const API_BASE = "http://127.0.0.1:8000";
 
@@ -9,27 +10,73 @@ export default function App() {
   const [answer, setAnswer] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [steps, setSteps] = useState<any[]>([]);
+  const controllerRef = useRef<AbortController | null>(null);
 
   async function ask() {
     setLoading(true);
     setError(null);
     setAnswer(null);
+    setSteps([]);
     try {
-      const res = await fetch(`${API_BASE}/ask`, {
+      const controller = new AbortController();
+      controllerRef.current = controller;
+      const res = await fetch(`${API_BASE}/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query }),
+        signal: controller.signal,
       });
-      if (!res.ok) {
+      if (!res.ok || !res.body) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data?.detail || `HTTP ${res.status}`);
       }
-      const data = await res.json();
-      setAnswer(data.answer ?? "");
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() || ""; // keep last partial chunk
+        for (const part of parts) {
+          const lines = part.split("\n");
+          for (const line of lines) {
+            if (!line.startsWith("data:")) continue;
+            const payload = line.slice(5).trim();
+            if (!payload) continue;
+            let evt: any;
+            try {
+              evt = JSON.parse(payload);
+            } catch {
+              continue;
+            }
+            const t = evt.type;
+            if (t === "final_answer") {
+              setAnswer(evt.message || "");
+            } else if (t === "error") {
+              setError(evt.message || "Unbekannter Fehler");
+            }
+            // Collect reasoning/tool traces
+            if (t === "thinking" || t === "step" || t === "tool_thinking" || t === "tool_event") {
+              setSteps((prev) => [...prev, evt]);
+            }
+            if (t === "complete") {
+              setLoading(false);
+            }
+          }
+        }
+      }
     } catch (e: any) {
-      setError(e?.message || String(e));
+      if (e?.name === 'AbortError') {
+        // user aborted; no error toast
+      } else {
+        setError(e?.message || String(e));
+      }
     } finally {
       setLoading(false);
+      controllerRef.current = null;
     }
   }
 
@@ -220,6 +267,35 @@ export default function App() {
                 )}
                 {loading ? "Recherchiere..." : "🚀 Frage stellen"}
               </button>
+
+              {loading && (
+                <button
+                  onClick={() => { controllerRef.current?.abort(); setLoading(false); }}
+                  disabled={!loading}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "0.5rem",
+                    padding: "0.875rem 1.5rem",
+                    fontSize: "1rem",
+                    fontWeight: 600,
+                    color: "#dc2626",
+                    background: "#fff",
+                    border: "2px solid #fecaca",
+                    borderRadius: "12px",
+                    cursor: "pointer",
+                    transition: "all 0.2s ease"
+                  }}
+                  onMouseOver={(e) => {
+                    (e.target as HTMLButtonElement).style.background = "#fef2f2";
+                  }}
+                  onMouseOut={(e) => {
+                    (e.target as HTMLButtonElement).style.background = "#fff";
+                  }}
+                >
+                  ⏹️ Abbrechen
+                </button>
+              )}
               
               <button
                 onClick={() => { setQuery(""); setAnswer(null); setError(null); }}
@@ -306,6 +382,9 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* Reasoning Trace */}
+        <ReasoningTraceBox steps={steps} isLoading={loading} />
 
         {/* Error Message */}
         {error && (
