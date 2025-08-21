@@ -13,7 +13,7 @@ LegalGenius combines a comprehensive corpus of German legal documents with an in
 - **Court Decision Archive**: Extensive collection of court decisions organized by year (1970-2029)
 - **Intelligent Search**: Boolean query support with AND/OR operators and parentheses
 - **Multi-Provider LLM Support**: Compatible with OpenRouter, Nebius, and Ollama
-- **Advanced Text Search**: Powered by ripgrep for fast, precise text matching
+- **Advanced Text Search**: Powered by Elasticsearch for fast, scalable search with ripgrep for precise text matching
 - **Context-Aware Results**: Provides relevant excerpts with configurable context
 - **German Language Optimized**: Designed specifically for German legal terminology and structure
 - **Modular Architecture**: Supports web UI, CLI, and batch processing
@@ -25,6 +25,7 @@ LegalGenius combines a comprehensive corpus of German legal documents with an in
 
 - Python 3.8+
 - Node.js 18+ (for web interface)
+- Docker Desktop (for Elasticsearch search engine)
 - ripgrep (`rg`) installed and available in PATH
 - An API key for your chosen LLM provider
 
@@ -54,7 +55,21 @@ export OPENROUTER_API_KEY="your-api-key"
 export LLM_PROVIDER="ollama"
 ```
 
-**3. Start the application:**
+**3. Start Elasticsearch:**
+```bash
+# Start Elasticsearch container
+docker start elasticsearch-simple
+
+# For first-time setup:
+docker run -d --name elasticsearch-simple \
+  -p 9200:9200 -p 9300:9300 \
+  -e "discovery.type=single-node" \
+  -e "xpack.security.enabled=false" \
+  -e "ES_JAVA_OPTS=-Xms512m -Xmx512m" \
+  elasticsearch:8.11.0
+```
+
+**4. Start the application:**
 ```bash
 # Terminal 1: API server
 make api
@@ -227,6 +242,304 @@ The agent automatically:
 - Provides tool usage tracking
 - Implements configurable timeouts and step limits
 - Never uses mock responses (always real LLM calls)
+
+## Elasticsearch Search Engine
+
+LegalGenius uses Elasticsearch as its primary search engine for fast, scalable, and intelligent document retrieval across the German legal corpus. The Elasticsearch integration provides advanced full-text search capabilities with semantic understanding.
+
+### Elasticsearch Setup
+
+**Prerequisites:**
+- Docker Desktop installed and running
+- At least 2GB RAM available for Elasticsearch
+
+**Starting Elasticsearch:**
+
+If the container already exists:
+```bash
+docker start elasticsearch-simple
+```
+
+For first-time setup, create a new container:
+```bash
+docker run -d --name elasticsearch-simple \
+  -p 9200:9200 -p 9300:9300 \
+  -e "discovery.type=single-node" \
+  -e "xpack.security.enabled=false" \
+  -e "ES_JAVA_OPTS=-Xms512m -Xmx512m" \
+  elasticsearch:8.11.0
+```
+
+**Verifying Elasticsearch is running:**
+```bash
+# Check container status
+docker ps --filter "name=elasticsearch-simple"
+
+# Test Elasticsearch is responding
+curl -X GET "localhost:9200/"
+
+# Check cluster health
+curl -X GET "localhost:9200/_cluster/health?pretty"
+```
+
+**Stopping Elasticsearch:**
+```bash
+docker stop elasticsearch-simple
+```
+
+### Search Engine Features
+
+**Advanced Text Search:**
+- Full-text search across all German legal documents
+- Fuzzy matching for typos and variations
+- Boolean queries (AND, OR, NOT operators)
+- Phrase searching with proximity
+- Field-specific search (title, content, metadata)
+
+**German Language Optimization:**
+- German language analyzer with stemming
+- Stop word filtering for legal context
+- Compound word decomposition
+- Case-insensitive search
+
+**Performance Benefits:**
+- Millisecond search response times
+- Scalable to millions of documents
+- Memory-efficient indexing
+- Relevance scoring and ranking
+
+### Indexing Legal Documents
+
+**Index Creation:**
+The system automatically creates optimized indices for different document types:
+- `legal-laws`: German federal laws and regulations
+- `legal-cases`: Court decisions and judgments
+- `legal-combined`: Unified search across all documents
+
+**Document Indexing:**
+```bash
+# Index all legal documents
+python elasticsearch_indexer.py
+
+# Index specific document types
+python elasticsearch_indexer.py --type laws
+python elasticsearch_indexer.py --type cases
+```
+
+**Reindexing Documents:**
+
+To reindex specific document types (e.g., after data updates):
+
+```bash
+# Reindex all urteile (court decisions) - clean approach
+curl -X DELETE "localhost:9200/legal_urteile"
+python simple_elasticsearch_indexer.py --urteile-only
+
+# Reindex all gesetze (laws and regulations) - clean approach  
+curl -X DELETE "localhost:9200/legal_gesetze"
+python simple_elasticsearch_indexer.py --gesetze-only
+
+# Full reindex of everything
+curl -X DELETE "localhost:9200/legal_urteile"
+curl -X DELETE "localhost:9200/legal_gesetze"
+python simple_elasticsearch_indexer.py
+
+# Quick reindex (adds to existing - may create duplicates)
+python simple_elasticsearch_indexer.py --urteile-only
+```
+
+**Reindexing Time Estimates:**
+- Urteile only: ~5-10 minutes
+- Gesetze only: ~2-3 minutes  
+- Full reindex: ~10-15 minutes
+- Stats check: <1 second
+
+**Pre-Reindexing Checks:**
+```bash
+# Check current index status
+python simple_elasticsearch_indexer.py --stats
+
+# Check document count
+curl -X GET "localhost:9200/legal_urteile/_count?pretty"
+curl -X GET "localhost:9200/legal_gesetze/_count?pretty"
+
+# Verify Elasticsearch health
+curl -X GET "localhost:9200/_cluster/health?pretty"
+```
+
+**Index Management:**
+```bash
+# Check index status
+curl -X GET "localhost:9200/_cat/indices?v"
+
+# View index mapping
+curl -X GET "localhost:9200/legal-combined/_mapping?pretty"
+
+# Check document count
+curl -X GET "localhost:9200/legal-combined/_count?pretty"
+```
+
+### Search API Integration
+
+The Elasticsearch engine integrates seamlessly with the LegalGenius search tools:
+
+**File Search Tool Enhancement:**
+- Boolean queries automatically converted to Elasticsearch DSL
+- Results ranked by relevance score
+- Context extraction around matching terms
+- Metadata enrichment (document type, date, source)
+
+**Performance Monitoring:**
+- Search query performance metrics
+- Index size and document statistics
+- Memory usage tracking
+- Search latency monitoring
+
+### Elasticsearch Configuration
+
+**Memory Settings:**
+- Minimum: 512MB (`ES_JAVA_OPTS=-Xms512m -Xmx512m`)
+- Recommended: 1GB (`ES_JAVA_OPTS=-Xms1g -Xmx1g`)
+- Production: 2-4GB depending on corpus size
+
+**Index Settings:**
+```json
+{
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 0,
+    "analysis": {
+      "analyzer": {
+        "german_legal": {
+          "type": "custom",
+          "tokenizer": "standard",
+          "filter": ["lowercase", "german_stop", "german_stemmer"]
+        }
+      }
+    }
+  }
+}
+```
+
+**Document Mapping:**
+- `title`: Analyzed text with German language processing
+- `content`: Full-text with paragraph-aware tokenization
+- `document_type`: Keyword field (law, regulation, case)
+- `date`: Date field for temporal filtering
+- `source`: Keyword field for document origin
+
+### Troubleshooting
+
+**Container Issues:**
+```bash
+# Check container logs
+docker logs elasticsearch-simple
+
+# Restart container
+docker restart elasticsearch-simple
+
+# Remove and recreate container
+docker rm elasticsearch-simple
+# Then run the docker run command again
+```
+
+**Index Issues:**
+```bash
+# Delete and recreate indices
+curl -X DELETE "localhost:9200/legal_urteile"
+curl -X DELETE "localhost:9200/legal_gesetze"
+python simple_elasticsearch_indexer.py
+```
+
+**Reindexing Issues:**
+```bash
+# Check if Elasticsearch is running
+curl -X GET "localhost:9200/_cluster/health?pretty"
+
+# View available indices
+curl -X GET "localhost:9200/_cat/indices?v"
+
+# Check for indexing errors with verbose output
+python simple_elasticsearch_indexer.py --urteile-only --host localhost --port 9200
+
+# If reindexing fails midway, clean up and restart
+curl -X DELETE "localhost:9200/legal_urteile"
+python simple_elasticsearch_indexer.py --urteile-only
+
+# Monitor indexing progress in separate terminal
+watch 'curl -s "localhost:9200/legal_urteile/_count" | python -m json.tool'
+```
+
+**Performance Issues:**
+- Increase memory allocation in `ES_JAVA_OPTS`
+- Monitor cluster health with `/_cluster/health`
+- Check disk space with `/_cat/allocation?v`
+
+### Direct Search with simple_elasticsearch_indexer.py
+
+For direct Elasticsearch searches without the AI agent, use the `simple_elasticsearch_indexer.py` script:
+
+**Search Across Both Laws and Court Decisions:**
+```bash
+# Search multiple indices (recommended)
+python simple_elasticsearch_indexer.py --search "Kündigungsfrist" --index "legal_gesetze,legal_urteile"
+
+# Multiple keyword search (all terms must appear)
+python simple_elasticsearch_indexer.py --search "Kündigung" "Mietvertrag" --index "legal_gesetze,legal_urteile"
+
+# Phrase search for exact matches
+python simple_elasticsearch_indexer.py --search "fristlose Kündigung" --index "legal_gesetze,legal_urteile"
+```
+
+**Search Specific Document Types:**
+```bash
+# Search only laws and regulations
+python simple_elasticsearch_indexer.py --search "BGB § 573" --gesetze-only
+
+# Search only court decisions
+python simple_elasticsearch_indexer.py --search "Mietrecht BGH" --urteile-only
+```
+
+**Index Management:**
+```bash
+# Index all documents (laws + court decisions)
+python simple_elasticsearch_indexer.py
+
+# Index only specific types
+python simple_elasticsearch_indexer.py --gesetze-only
+python simple_elasticsearch_indexer.py --urteile-only
+
+# Check index statistics
+python simple_elasticsearch_indexer.py --stats
+```
+
+**Search Results Include:**
+- Document titles and types (gesetz/urteil)
+- File paths and relevance scores
+- Line numbers where matches occur
+- Highlighted excerpts with context
+- Court information and case numbers (for urteile)
+
+**Example Searches:**
+```bash
+# Comprehensive rental law research
+python simple_elasticsearch_indexer.py --search "Mietrecht" "Kündigung" --index "legal_gesetze,legal_urteile"
+
+# Divorce law across legislation and jurisprudence
+python simple_elasticsearch_indexer.py --search "Scheidung" "Unterhalt" --index "legal_gesetze,legal_urteile"
+
+# Specific BGB provisions with case law
+python simple_elasticsearch_indexer.py --search "BGB" "§ 323" "Rücktritt" --index "legal_gesetze,legal_urteile"
+
+# Contract law research
+python simple_elasticsearch_indexer.py --search "Vertrag" "Willenserklärung" --index "legal_gesetze,legal_urteile"
+```
+
+This direct search method is ideal for:
+- Quick fact-checking without AI interpretation
+- Finding specific legal provisions or case citations
+- Researching terminology across both legislation and case law
+- Bulk research across the entire legal corpus
 
 ## Configuration
 

@@ -20,7 +20,24 @@ import uuid
 class SimpleLegalDocumentIndexer:
     def __init__(self, es_host: str = "localhost", es_port: int = 9200):
         self.es_url = f"http://{es_host}:{es_port}"
-        self.data_dir = Path("data")
+        
+        # Find the data directory - look in current directory first, then parent
+        current_dir = Path(".").resolve()
+        data_paths_to_check = [
+            current_dir / "data",
+            current_dir.parent / "data",
+            Path(__file__).parent / "data"  # Same directory as script
+        ]
+        
+        self.data_dir = None
+        for data_path in data_paths_to_check:
+            if data_path.exists() and (data_path / "gesetze").exists():
+                self.data_dir = data_path
+                break
+                
+        if self.data_dir is None:
+            # Fallback to original behavior
+            self.data_dir = Path("data")
         
     def ensure_index_exists(self, index_name: str):
         """Create index if it doesn't exist with appropriate mapping"""
@@ -452,7 +469,9 @@ class SimpleLegalDocumentIndexer:
         
         gesetze_dir = self.data_dir / "gesetze"
         if not gesetze_dir.exists():
-            print(f"Gesetze directory not found: {gesetze_dir}")
+            print(f"❌ Gesetze directory not found: {gesetze_dir}")
+            print(f"   Current working directory: {os.getcwd()}")
+            print(f"   Looking for directory: {gesetze_dir.absolute()}")
             return
         
         documents = []
@@ -493,7 +512,9 @@ class SimpleLegalDocumentIndexer:
         
         urteile_dir = self.data_dir / "urteile_markdown_by_year"
         if not urteile_dir.exists():
-            print(f"Urteile directory not found: {urteile_dir}")
+            print(f"❌ Urteile directory not found: {urteile_dir}")
+            print(f"   Current working directory: {os.getcwd()}")
+            print(f"   Looking for directory: {urteile_dir.absolute()}")
             return
         
         all_documents = []
@@ -530,9 +551,29 @@ class SimpleLegalDocumentIndexer:
     def index_all(self):
         """Index all documents"""
         print("Starting full indexing of legal documents...")
-        self.index_gesetze()
-        self.index_urteile()
-        print("Indexing complete!")
+        print("\n" + "="*50)
+        print("STEP 1: Indexing Gesetze (Laws and Regulations)")
+        print("="*50)
+        try:
+            self.index_gesetze()
+            print("✓ Gesetze indexing completed successfully")
+        except Exception as e:
+            print(f"✗ Error indexing Gesetze: {e}")
+            
+        print("\n" + "="*50)
+        print("STEP 2: Indexing Urteile (Court Decisions)")
+        print("="*50)
+        try:
+            self.index_urteile()
+            print("✓ Urteile indexing completed successfully")
+        except Exception as e:
+            print(f"✗ Error indexing Urteile: {e}")
+            
+        print("\n" + "="*50)
+        print("INDEXING COMPLETE!")
+        print("="*50)
+        self.get_index_stats('legal_gesetze')
+        self.get_index_stats('legal_urteile')
 
     def get_index_stats(self, index_name: str):
         """Get statistics about an index"""
@@ -641,11 +682,20 @@ def main():
     parser.add_argument('--urteile-only', action='store_true', help='Index only Urteile documents')
     parser.add_argument('--stats', action='store_true', help='Show index statistics')
     parser.add_argument('--search', nargs='+', help='Search for keywords')
-    parser.add_argument('--index', default='legal_urteile', help='Index to search in (can be comma-separated)')
+    parser.add_argument('--index', default='legal_gesetze,legal_urteile', help='Index to search in (can be comma-separated)')
+    parser.add_argument('--debug', action='store_true', help='Enable debug output')
     
     args = parser.parse_args()
     
     indexer = SimpleLegalDocumentIndexer(args.host, args.port)
+    
+    if args.debug:
+        print(f"🔍 DEBUG: Current working directory: {os.getcwd()}")
+        print(f"🔍 DEBUG: Data directory: {indexer.data_dir.absolute()}")
+        print(f"🔍 DEBUG: Gesetze directory exists: {(indexer.data_dir / 'gesetze').exists()}")
+        print(f"🔍 DEBUG: Urteile directory exists: {(indexer.data_dir / 'urteile_markdown_by_year').exists()}")
+        print(f"🔍 DEBUG: Elasticsearch URL: {indexer.es_url}")
+        print("🔍 DEBUG: Arguments:", vars(args))
     
     if args.search:
         # Adjust search index based on flags
