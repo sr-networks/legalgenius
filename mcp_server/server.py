@@ -38,6 +38,8 @@ def handle_call(request: Dict[str, Any]) -> Dict[str, Any]:
                 result = tools.list_paths(**args)
             elif tool_name == "file_search":
                 result = tools.file_search(**args)
+            elif tool_name == "elasticsearch_search":
+                result = tools.elasticsearch_search(**args)
             else:
                 raise ValueError(f"Unknown tool: {tool_name}")
             log_tool_call(tool_name, args, result)

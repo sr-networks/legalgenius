@@ -28,6 +28,7 @@ import shutil
 from pathlib import Path
 from typing import Dict, List
 import fnmatch
+import requests
 
 import yaml
 
@@ -589,3 +590,179 @@ def list_paths(subdir: str = ".") -> dict:
     """List files within the sandbox root under a subdirectory."""
     files = _sandbox.list_paths(subdir)
     return {"files": files}
+
+
+def elasticsearch_search(
+    query: str,
+    document_type: str = "all",
+    max_results: int = 10,
+    es_host: str = "localhost",
+    es_port: int = 9200
+) -> dict:
+    """Search legal documents using Elasticsearch for fast, comprehensive results.
+
+    This is the preferred search method for legal research as it provides:
+    - Full-text search across laws (gesetze) and court decisions (urteile)
+    - German language analysis with stemming and legal terminology
+    - Relevance scoring and ranking
+    - Fast search across the entire legal corpus
+    
+    Parameters:
+    - query: Search terms or phrases (e.g., "Kündigungsfrist", "BGB § 573", "fristlose Kündigung")
+    - document_type: Type of documents to search - "all" (default), "gesetze" (laws), "urteile" (court decisions)
+    - max_results: Maximum number of results to return (default 10)
+    - es_host: Elasticsearch host (default localhost)
+    - es_port: Elasticsearch port (default 9200)
+
+    Returns: {
+        "total_hits": int,
+        "matches": [
+            {
+                "title": str,
+                "document_type": "gesetz" | "urteil", 
+                "file_path": str,
+                "score": float,
+                "content_preview": str,
+                "line_matches": [{"line_number": int, "text": str}],
+                "metadata": {...}
+            }
+        ]
+    }
+    
+    Use this tool for:
+    - Finding relevant laws and court decisions
+    - Legal term searches across the entire corpus
+    - Cross-referencing between legislation and jurisprudence
+    - Comprehensive legal research
+    """
+    es_url = f"http://{es_host}:{es_port}"
+    
+    # Determine which indices to search
+    if document_type == "gesetze":
+        indices = "legal_gesetze"
+    elif document_type == "urteile":
+        indices = "legal_urteile"
+    else:  # "all" or any other value
+        indices = "legal_gesetze,legal_urteile"
+    
+    # Build Elasticsearch query
+    search_query = {
+        "query": {
+            "multi_match": {
+                "query": query,
+                "fields": ["title^3", "content^1"],
+                "type": "best_fields",
+                "fuzziness": "AUTO",
+                "operator": "or"
+            }
+        },
+        "highlight": {
+            "fields": {
+                "title": {"number_of_fragments": 1, "fragment_size": 100},
+                "content": {"number_of_fragments": 3, "fragment_size": 200}
+            },
+            "pre_tags": ["<em>"],
+            "post_tags": ["</em>"]
+        },
+        "size": min(max_results, 50),  # Cap at 50 for performance
+        "_source": ["title", "document_type", "file_path", "content", "date", "court", "case_number", "jurabk", "content_start_line"]
+    }
+    
+    try:
+        response = requests.post(
+            f"{es_url}/{indices}/_search",
+            json=search_query,
+            headers={'Content-Type': 'application/json'},
+            timeout=10
+        )
+        
+        if response.status_code != 200:
+            return {
+                "error": f"Elasticsearch error: {response.status_code} - {response.text}",
+                "total_hits": 0,
+                "matches": []
+            }
+            
+        result = response.json()
+        hits = result.get('hits', {})
+        total_hits = hits.get('total', {}).get('value', 0)
+        
+        matches = []
+        for hit in hits.get('hits', []):
+            source = hit['_source']
+            
+            # Extract line matches from content
+            line_matches = []
+            content = source.get('content', '')
+            if content:
+                lines = content.split('\n')
+                query_terms = query.lower().split()
+                content_start_line = source.get('content_start_line', 1)
+                
+                for i, line in enumerate(lines[:20], 1):  # Check first 20 lines for performance
+                    line_lower = line.lower()
+                    if any(term in line_lower for term in query_terms):
+                        actual_line_num = content_start_line + i - 1 if content_start_line else i
+                        line_matches.append({
+                            "line_number": actual_line_num,
+                            "text": line.strip()[:200]  # Limit line length
+                        })
+                        if len(line_matches) >= 3:  # Limit matches per document
+                            break
+            
+            # Create content preview from highlights or first part of content
+            content_preview = ""
+            if 'highlight' in hit:
+                if 'content' in hit['highlight']:
+                    content_preview = ' ... '.join(hit['highlight']['content'][:2])
+                elif 'title' in hit['highlight']:
+                    content_preview = hit['highlight']['title'][0]
+            
+            if not content_preview and content:
+                content_preview = content[:300] + ("..." if len(content) > 300 else "")
+            
+            # Build metadata
+            metadata = {}
+            if source.get('date'):
+                metadata['date'] = source['date']
+            if source.get('court'):
+                metadata['court'] = source['court']  
+            if source.get('case_number'):
+                metadata['case_number'] = source['case_number']
+            if source.get('jurabk'):
+                metadata['jurabk'] = source['jurabk']
+                
+            matches.append({
+                "title": source.get('title', 'Untitled'),
+                "document_type": source.get('document_type', 'unknown'),
+                "file_path": source.get('file_path', ''),
+                "score": hit['_score'],
+                "content_preview": content_preview,
+                "line_matches": line_matches,
+                "metadata": metadata
+            })
+        
+        return {
+            "total_hits": total_hits,
+            "matches": matches,
+            "search_info": {
+                "query": query,
+                "document_type": document_type,
+                "indices_searched": indices,
+                "max_results": max_results
+            }
+        }
+        
+    except requests.exceptions.RequestException as e:
+        return {
+            "error": f"Connection error to Elasticsearch: {str(e)}",
+            "total_hits": 0,
+            "matches": [],
+            "suggestion": "Please ensure Elasticsearch is running on localhost:9200"
+        }
+    except Exception as e:
+        return {
+            "error": f"Search error: {str(e)}",
+            "total_hits": 0,
+            "matches": []
+        }

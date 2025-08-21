@@ -9,8 +9,9 @@ interface ToolEvent {
 }
 
 interface ReasoningStep {
-  type: 'thinking' | 'step' | 'tool_thinking' | 'tool_event';
+  type: 'thinking' | 'step' | 'tool_thinking' | 'tool_event' | 'reasoning';
   message?: string;
+  content?: string; // For reasoning content
   tool?: string;
   args?: Record<string, any>;
   event?: ToolEvent;
@@ -38,8 +39,8 @@ const ReasoningTraceBox: React.FC<ReasoningTraceBoxProps> = ({ steps, isLoading 
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i];
       
-      if (step.type === 'thinking' || step.type === 'step') {
-        // Always keep thinking and step messages
+      if (step.type === 'thinking' || step.type === 'step' || step.type === 'reasoning') {
+        // Always keep thinking, step, and reasoning messages
         processed.push(step);
       } else if (step.type === 'tool_thinking') {
         // This starts a new tool execution - replace any previous tool in progress
@@ -69,6 +70,7 @@ const ReasoningTraceBox: React.FC<ReasoningTraceBoxProps> = ({ steps, isLoading 
     switch (type) {
       case 'thinking': return '●';
       case 'step': return '→';
+      case 'reasoning': return '🧠';
       case 'tool_thinking': return '○';
       case 'tool_event': return '✓';
       default: return '•';
@@ -79,6 +81,7 @@ const ReasoningTraceBox: React.FC<ReasoningTraceBoxProps> = ({ steps, isLoading 
     switch (type) {
       case 'thinking': return 'bg-yellow-50 border-yellow-200 text-yellow-800';
       case 'step': return 'bg-blue-50 border-blue-200 text-blue-800';
+      case 'reasoning': return 'bg-indigo-50 border-indigo-200 text-indigo-800';
       case 'tool_thinking': return 'bg-purple-50 border-purple-200 text-purple-800';
       case 'tool_event': return 'bg-green-50 border-green-200 text-green-800';
       default: return 'bg-gray-50 border-gray-200 text-gray-800';
@@ -159,6 +162,15 @@ const ReasoningTraceBox: React.FC<ReasoningTraceBoxProps> = ({ steps, isLoading 
                       </span>
                     )}
                   </div>
+                  
+                  {step.content && (
+                    <div className="text-xs bg-white bg-opacity-60 p-3 rounded mt-2 border-l-2 border-indigo-300">
+                      <div className="font-medium mb-1 text-indigo-700">Reasoning:</div>
+                      <div className="whitespace-pre-wrap font-mono text-xs leading-relaxed max-h-32 overflow-y-auto">
+                        {step.content}
+                      </div>
+                    </div>
+                  )}
                   
                   {step.args && Object.keys(step.args).length > 0 && (
                     <div className="mb-2">

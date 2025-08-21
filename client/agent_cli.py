@@ -70,7 +70,7 @@ class MCPClient:
                 q = args.get("query")
                 f = args.get("file_list")
                 l = args.get("line")
-                lines: List[str] = [f"tool: {tool}", f"query: {q}", f"file_list: {f}", f"matches: {len(matches)}, line: {l}"]
+                lines: List[str] = [f"tool: {tool}", f"query: {q}", f"file_list: {f}", f"Matches: {len(matches)}, line: {l}"]
                 for m in matches[:5]:
                     p = m.get("file")
                     ln = m.get("line")
@@ -83,6 +83,25 @@ class MCPClient:
                         lines.append(f"    Section: {sec[:80]}")
                     if byte_range:
                         lines.append(f"    Byte range: {byte_range[0]}-{byte_range[1]}")
+                return "\n".join(lines)
+            if tool == "elasticsearch_search":
+                matches = (result or {}).get("matches", [])
+                total_hits = (result or {}).get("total_hits", 0)
+                q = args.get("query")
+                doc_type = args.get("document_type", "all")
+                max_res = args.get("max_results", 10)
+                lines: List[str] = [f"tool: {tool}", f"query: {q}", f"document_type: {doc_type}", f"Total hits: {total_hits}, showing: {len(matches)}/{max_res}"]
+                for m in matches[:5]:
+                    title = m.get("title", "")[:80]
+                    dtype = m.get("document_type", "")
+                    score = m.get("score", 0.0)
+                    path = m.get("file_path", "")
+                    preview = m.get("content_preview", "")[:100]
+                    line_matches = len(m.get("line_matches", []))
+                    lines.append(f"  [{dtype}] {title} (score: {score:.2f})")
+                    lines.append(f"    Path: {path}")
+                    lines.append(f"    Preview: {preview}")
+                    lines.append(f"    Line matches: {line_matches}")
                 return "\n".join(lines)
             if tool in ("file_search", "list_paths"):
                 files = (result or {}).get("files", [])
@@ -143,8 +162,9 @@ def call_llm(
             temperature=temperature,
             extra_headers=extra_headers or None,
             max_tokens=800,
-            extra_body={},
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
+#        print (completion.reasoning_content)
     except Exception as e:
         raise RuntimeError(f"LLM request failed: {e}")
     try:
@@ -159,31 +179,28 @@ def call_llm(
 
 TOOL_SUMMARY = (
     "Verfügbare Werkzeuge (Function Calling):\n"
-    "1) file_search: Argumente {query: Zeichenkette mit AND/OR und Klammern, glob?: Zeichenkette, max_results?: Zahl}. Rückgabe {files: Zeichenkette[]}.\n"
-#    "2) list_paths: Argumente {subdir?: Zeichenkette}. Rückgabe {files: Zeichenkette[]} der erlaubten Dateien unterhalb von subdir. Für das Wurzelverzeichnis verwende '.'. Unterverzeichnis gesetze enthält die Bundesgesetze, urteile_markdown_by_year die Rechtsprechung.\n"
-    "3) search_rg (ripgrep): Argumente {query: Schlagwort, file_list?: Zeichenkette[], max_results?: Zahl, context_lines?: Zahl, regex?: bool, case_sensitive?: bool}. Rückgabe {matches: [{file, line, text, context, section, byte_range}]}. Liefert strukturierte Treffer mit Kontext, nächstem Header und Byte-Positionen für read_file_range.\n"
-    "4) read_file_range: Argumente {path, start, end, context?, max_lines?}. Rückgabe: Textausschnitt um den Treffer (max. 20 Zeilen standardmäßig).\n"
+    "1) elasticsearch_search (BEVORZUGT): Argumente {query: Suchbegriff(e), document_type?: 'all'|'gesetze'|'urteile', max_results?: Zahl}. Rückgabe {total_hits, matches: [{title, document_type, file_path, score, content_preview, line_matches, metadata}]}. Schnelle Volltextsuche über gesamten Rechtskorpus mit Relevanz-Ranking.\n"
+#    "2) search_rg (ripgrep): Argumente {query: Schlagwort, file_list?: Zeichenkette[], max_results?: Zahl, context_lines?: Zahl, regex?: bool, case_sensitive?: bool}. Rückgabe {matches: [{file, line, text, context, section, byte_range}]}. Präzise Suche in spezifischen Dateien.\n"
+#    "2) read_file_range: Argumente {path, start, end, context?, max_lines?}. Rückgabe: Textausschnitt um den Treffer (max. 20 Zeilen standardmäßig).\n"
+#    "3) file_search: Argumente {query: Zeichenkette mit AND/OR und Klammern, glob?: Zeichenkette, max_results?: Zahl}. Rückgabe {files: Zeichenkette[]}. Dateinamen-basierte Suche.\n"
 )
 
 SYSTEM_PROMPT = (
     "Du bist ein Recherche-Agent für deutsches Recht. Ziel: Beantworte die Nutzerfrage mithilfe der bereitgestellten Werkzeuge.\n"
     "Richtlinien:\n"
-    "- Überlege zuerst, welche Rechtsquellen, Gesetze oder Verfahren relevant sein könnten."
-    "- Denke über passende Suchbegriffe nach, die zur Frage und zum Rechtskorpus passen."
-    "- Der Rechtskorpus besteht aus allen Gesetzen und Urteilen in Deutschland."
-    "- Sie sind in mehreren Unterordnern abgelegt, auf die du mit den Werkzeugen zugreifen kannst."
-#    "- Nutze zuerst list_paths, um verfügbare Dateien zu sichten"abs
-    "- Verwende zuerst file_search um alle relevanten Dateien zu finden, die die wichtigen Schlagwörter aus der Frage und dem rechtlichen Kontext enthalten." 
-    "- Es sind AND und OR Verknüpfungen mehrerer Suchbegriffe möglich. "
-    "- Danach benutze search_rg für präzise Fundstellen in einer oder meherer Dateien. "
-#    "- Reflektiere dann die Ergebnisse und ob sie für eine Antwort ausreichen."
-#    "- Falls nicht ausreichend, erweitere die Suche, erhöhe ggf. max_results/context_lines und versuche die Werkzeuge erneut.\n"
-    "- Bei Gesetzen: Verwende IMMER OR-Verknüpfungen für Vollname und Abkürzung (z.B. 'Bürgerliches Gesetzbuch OR BGB', 'Rechtsanwaltsvergütungsgesetz OR RVG')."
-    "- Suche auch mit search_rg in der neueren Rechtsprechung im Ordner urteile_markdown_by_year."
-    "- Verwende mehrere Suchstrategien: Einzelwörter, exakte Phrasen, und verwandte Begriffe."
-    "- Nutze search_rg Ergebnisse: Die byte_range Werte können direkt an read_file_range weitergegeben werden für präzise Textausschnitte."
+    "- Überlege zuerst, welche Rechtsquellen, Gesetze oder Verfahren relevant sein könnten.\n"
+    "- Denke über passende Suchbegriffe nach, die zur Frage und zum Rechtskorpus passen.\n"
+    "- Der Rechtskorpus besteht aus allen Gesetzen und Urteilen in Deutschland.\n"
+    "- BEVORZUGE elasticsearch_search für die primäre Recherche: Es durchsucht schnell den gesamten Rechtskorpus mit Relevanz-Ranking.\n"
+    "- Verwende elasticsearch_search mit präzisen rechtlichen Suchbegriffen (z.B. 'Kündigungsfrist', 'BGB § 573', 'fristlose Kündigung').\n"
+    "- Nutze document_type Parameter: 'all' (Standard), 'gesetze' (nur Gesetze), 'urteile' (nur Rechtsprechung).\n"
+    "- Bei Gesetzen: Suche sowohl mit Vollname als auch Abkürzung (z.B. 'BGB' und 'Bürgerliches Gesetzbuch').\n"
+    "- Elasticsearch liefert title, document_type, content_preview, line_matches und metadata - nutze diese Informationen.\n"
+    "- Für detaillierte Textausschnitte: Verwende read_file_range mit den file_path und line_number Angaben aus elasticsearch_search.\n"
+    "- search_rg nur als Ergänzung für präzise Suchen in spezifischen Dateien, wenn elasticsearch_search nicht ausreicht.\n"
+    "- Verwende mehrere Suchstrategien: Einzelwörter, exakte Phrasen, und verwandte Begriffe.\n"
     "- Wenn ausreichend, erzeuge final_answer mit kurzer Textstelle und Zitation (Pfad + Zeilennummer).\n"
-    "- Antworte immer auf Deutsch!"
+    "- Antworte immer auf Deutsch!\n"
     "- Bei Abbruch wegen Limit: final_answer mit kurzer Erklärung, was versucht wurde und warum keine Antwort gefunden wurde.\n\n"
     + TOOL_SUMMARY
 )
@@ -214,6 +231,22 @@ def _build_tools_spec() -> List[Dict[str, Any]]:
         {
             "type": "function",
             "function": {
+                "name": "elasticsearch_search",
+                "description": "PREFERRED: Fast full-text search across German legal corpus (laws and court decisions) with relevance ranking. Use this for comprehensive legal research.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search terms or phrases (e.g., 'Kündigungsfrist', 'BGB § 573')"},
+                        "document_type": {"type": "string", "enum": ["all", "gesetze", "urteile"], "description": "Type of documents: 'all' (default), 'gesetze' (laws only), 'urteile' (court decisions only)"},
+                        "max_results": {"type": "integer", "minimum": 3, "maximum": 50, "description": "Maximum number of results (default 10)"},
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "file_search",
                 "description": "Return files whose contents match a boolean query (AND/OR, parentheses) over the legal corpus.",
                 "parameters": {
@@ -241,25 +274,25 @@ def _build_tools_spec() -> List[Dict[str, Any]]:
 #                },
 #            },
 #        },
-        {
-            "type": "function",
-            "function": {
-                "name": "search_rg",
-                "description": "Search lines using ripgrep. Optional file_list narrows search. Begin with only one keyword. Refine withg multiple keywords with AND/OR or regex alternations if results are too broad. ",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "Single keyword"},
-                        "file_list": {"type": "array", "items": {"type": "string"}, "description": "File patterns: specific files, folders (e.g. 'gesetze/', 'urteile_markdown_by_year/'), or './' for entire corpus"},
-                        "max_results": {"type": "integer", "minimum": 3, "description": "Maximum number of results per file"},
-                        "context_lines": {"type": "integer", "minimum": 1, "maximum": 10, "description": "Number of context lines"},
-                        "regex": {"type": "boolean", "description": "Whether to treat query as regex pattern (default False)"},
-                        "case_sensitive": {"type": "boolean", "description": "Whether search is case sensitive (default False)"},
-                    },
-                    "required": ["query","file_list"],
-                },
-            },
-        },
+#        {
+#            "type": "function",
+#            "function": {
+#                "name": "search_rg",
+#                "description": "Precise line-by-line search using ripgrep in specific files. Use only when elasticsearch_search is insufficient or for detailed examination of specific documents.",
+#                "parameters": {
+#                    "type": "object",
+#                    "properties": {
+#                        "query": {"type": "string", "description": "Single keyword"},
+#                        "file_list": {"type": "array", "items": {"type": "string"}, "description": "File patterns: specific files, folders (e.g. 'gesetze/', 'urteile_markdown_by_year/'), or './' for entire corpus"},
+#                        "max_results": {"type": "integer", "minimum": 3, "description": "Maximum number of results per file"},
+#                        "context_lines": {"type": "integer", "minimum": 1, "maximum": 10, "description": "Number of context lines"},
+#                        "regex": {"type": "boolean", "description": "Whether to treat query as regex pattern (default False)"},
+#                        "case_sensitive": {"type": "boolean", "description": "Whether search is case sensitive (default False)"},
+#                    },
+#                    "required": ["query","file_list"],
+#                },
+#            },
+#        },
         {
             "type": "function",
             "function": {
@@ -281,25 +314,8 @@ def _build_tools_spec() -> List[Dict[str, Any]]:
     ]
 
 
-def run_agent(
-    query: str,
-    mcp: MCPClient,
-    cfg: dict,
-    client: OpenAI,
-    model: str,
-    referer: Optional[str],
-    site_title: Optional[str],
-    provider: str = "openrouter",
-    tools_mode: str = "auto",
-) -> str:
-    tools = _build_tools_spec() if tools_mode != "off" else []
-    extra_headers: Dict[str, str] = {}
-    if referer:
-        extra_headers["HTTP-Referer"] = referer
-    if site_title:
-        extra_headers["X-Title"] = site_title
-
-    # Dispatcher for function tools
+def build_dispatch_functions(mcp: MCPClient, cfg: dict) -> Dict[str, Any]:
+    """Build dispatcher functions for MCP tools"""
     def dispatch_file_search(query: str, glob: Optional[str] = None, max_results: Optional[int] = None) -> str:
         res = mcp.call_tool("file_search", {
             "query": query,
@@ -335,12 +351,43 @@ def run_agent(
         })
         return json.dumps(res, ensure_ascii=False)
 
-    DISPATCH: Dict[str, Any] = {
+    def dispatch_elasticsearch_search(query: str, document_type: str = "all", max_results: int = 10) -> str:
+        res = mcp.call_tool("elasticsearch_search", {
+            "query": query,
+            "document_type": document_type,
+            "max_results": max_results,
+        })
+        return json.dumps(res, ensure_ascii=False)
+
+    return {
         "file_search": dispatch_file_search,
         "list_paths": dispatch_list_paths,
         "search_rg": dispatch_search_rg,
         "read_file_range": dispatch_read_file_range,
+        "elasticsearch_search": dispatch_elasticsearch_search,
     }
+
+
+def run_agent(
+    query: str,
+    mcp: MCPClient,
+    cfg: dict,
+    client: OpenAI,
+    model: str,
+    referer: Optional[str],
+    site_title: Optional[str],
+    provider: str = "openrouter",
+    tools_mode: str = "auto",
+) -> str:
+    tools = _build_tools_spec() if tools_mode != "off" else []
+    extra_headers: Dict[str, str] = {}
+    if referer:
+        extra_headers["HTTP-Referer"] = referer
+    if site_title:
+        extra_headers["X-Title"] = site_title
+
+    # Get dispatcher functions
+    DISPATCH = build_dispatch_functions(mcp, cfg)
 
     messages: List[Dict[str, Any]] = [
         {"role": "system", "content": SYSTEM_PROMPT},

@@ -65,7 +65,7 @@ export default function App() {
               setError(evt.message || "Unbekannter Fehler");
             }
             // Collect reasoning/tool traces
-            if (t === "thinking" || t === "step" || t === "tool_thinking" || t === "tool_event") {
+            if (t === "thinking" || t === "step" || t === "tool_thinking" || t === "tool_event" || t === "reasoning") {
               setSteps((prev) => [...prev, evt]);
             }
             // Track token usage

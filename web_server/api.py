@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from openai import OpenAI
 
 # Reuse existing agent implementation
-from client.agent_cli import MCPClient, run_agent, load_config, _build_tools_spec, SYSTEM_PROMPT
+from client.agent_cli import MCPClient, run_agent, load_config, _build_tools_spec, SYSTEM_PROMPT, build_dispatch_functions
 import sys
 from io import StringIO
 import re
@@ -390,39 +390,8 @@ def stream_agent_response(
         if site_title:
             extra_headers["X-Title"] = site_title
             
-        # Dispatcher functions (copied from agent_cli.py)
-        def dispatch_file_search(query: str, glob: Optional[str] = None, max_results: Optional[int] = None) -> str:
-            res = mcp.call_tool("file_search", {
-                "query": query,
-                "glob": glob or CFG.get("glob", "**/*.{txt,md}"),
-                "max_results": max_results or CFG.get("max_results", 50),
-            })
-            return json.dumps(res, ensure_ascii=False)
-
-        def dispatch_search_rg(query: str, file_list: Optional[List[str]] = None, max_results: Optional[int] = None, context_lines: Optional[int] = None) -> str:
-            res = mcp.call_tool("search_rg", {
-                "query": query,
-                "file_list": file_list,
-                "max_results": max_results or 20,
-                "context_lines": context_lines or 2,
-            })
-            return json.dumps(res, ensure_ascii=False)
-
-        def dispatch_read_file_range(path: str, start: int, end: int, context: Optional[int] = None, max_lines: Optional[int] = None) -> str:
-            res = mcp.call_tool("read_file_range", {
-                "path": path,
-                "start": int(start),
-                "end": int(end),
-                "context": context or CFG.get("context_bytes", 300),
-                "max_lines": max_lines or 20,
-            })
-            return json.dumps(res, ensure_ascii=False)
-
-        DISPATCH: Dict[str, Any] = {
-            "file_search": dispatch_file_search,
-            "search_rg": dispatch_search_rg,  
-            "read_file_range": dispatch_read_file_range,
-        }
+        # Use shared dispatcher functions from agent_cli.py
+        DISPATCH = build_dispatch_functions(mcp, CFG)
         
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -452,7 +421,7 @@ def stream_agent_response(
                 )
                 
                 resp = client.chat.completions.create(**create_kwargs)
-                
+#                print (resp)
                 # Track token usage immediately
                 if resp.usage:
                     tokens_sent = resp.usage.prompt_tokens
@@ -471,7 +440,12 @@ def stream_agent_response(
                 
             msg = resp.choices[0].message
             out_text = getattr(msg, "content", None) or ""
+            reasoning_content = getattr(msg, "reasoning_content", None) or ""
             tool_calls = getattr(msg, "tool_calls", None)
+            
+            # Emit reasoning content if available
+            if reasoning_content:
+                yield f"data: {json.dumps({'type': 'reasoning', 'content': reasoning_content, 'timestamp': time.time()})}\n\n"
             
             # Handle function call format
             fc = getattr(msg, "function_call", None)
