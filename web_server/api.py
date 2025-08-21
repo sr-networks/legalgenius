@@ -12,6 +12,9 @@ from openai import OpenAI
 
 # Reuse existing agent implementation
 from client.agent_cli import MCPClient, run_agent, load_config, _build_tools_spec, SYSTEM_PROMPT
+import sys
+from io import StringIO
+import re
 
 app = FastAPI(title="LegalGenius API", version="0.1.0")
 
@@ -115,6 +118,76 @@ def _resolve_llm(provider: Optional[str], model_override: Optional[str]) -> Dict
     raise HTTPException(status_code=400, detail=f"Unsupported provider: {provider}")
 
 
+def run_agent_with_token_tracking(
+    query: str,
+    mcp: MCPClient,
+    cfg: dict,
+    client: OpenAI,
+    model: str,
+    referer: Optional[str],
+    site_title: Optional[str],
+    provider: str = "openrouter",
+    tools_mode: str = "auto",
+) -> Dict[str, Any]:
+    """Wrapper around run_agent that captures token usage from stdout"""
+    
+    # Capture stdout to extract token information
+    old_stdout = sys.stdout
+    sys.stdout = captured_output = StringIO()
+    
+    total_tokens_sent = 0
+    total_tokens_received = 0
+    step_tokens = []
+    
+    try:
+        # Run the original agent
+        answer = run_agent(
+            query=query,
+            mcp=mcp,
+            cfg=cfg,
+            client=client,
+            model=model,
+            referer=referer,
+            site_title=site_title,
+            provider=provider,
+            tools_mode=tools_mode,
+        )
+        
+        # Parse captured output for token information
+        output_lines = captured_output.getvalue().split('\n')
+        for line in output_lines:
+            # Match pattern: [TOKENS] Step X - Y sent, Z received
+            # or [TOKENS] Y sent, Z received
+            token_match = re.search(r'\[TOKENS\](?:\s+Step\s+(\d+)\s+-\s+)?(\d+)\s+sent,\s+(\d+)\s+received', line)
+            if token_match:
+                step_num = token_match.group(1)
+                sent = int(token_match.group(2))
+                received = int(token_match.group(3))
+                
+                total_tokens_sent += sent
+                total_tokens_received += received
+                
+                step_tokens.append({
+                    "step": int(step_num) if step_num else None,
+                    "tokens_sent": sent,
+                    "tokens_received": received
+                })
+        
+        return {
+            "answer": answer,
+            "token_usage": {
+                "total_tokens_sent": total_tokens_sent,
+                "total_tokens_received": total_tokens_received,
+                "total_tokens": total_tokens_sent + total_tokens_received,
+                "step_breakdown": step_tokens
+            }
+        }
+        
+    finally:
+        # Restore stdout
+        sys.stdout = old_stdout
+
+
 @app.on_event("startup")
 def _startup() -> None:
     global MCP, OPENAI_CLIENT, RESOLVED_PROVIDER, RESOLVED_MODEL, RESOLVED_REFERER, RESOLVED_SITE_TITLE
@@ -157,7 +230,7 @@ def test(req: AskRequest) -> Dict[str, Any]:
         site_title = req.site_title if req.site_title is not None else llm.get("site_title")
         
         # Use agent with limited steps for legal research
-        answer = run_agent(
+        result = run_agent_with_token_tracking(
             query=req.query,
             mcp=MCP,
             cfg=CFG,
@@ -168,7 +241,12 @@ def test(req: AskRequest) -> Dict[str, Any]:
             provider=llm["provider"],
             tools_mode="auto",
         )
-        return {"answer": answer, "provider": llm["provider"], "model": model}
+        return {
+            "answer": result["answer"],
+            "provider": llm["provider"],
+            "model": model,
+            "token_usage": result["token_usage"]
+        }
     except Exception as e:
         return {"error": str(e)}
 
@@ -186,7 +264,7 @@ def ask(req: AskRequest) -> Dict[str, Any]:
         model = llm["model"]
         referer = req.referer if req.referer is not None else llm.get("referer")
         site_title = req.site_title if req.site_title is not None else llm.get("site_title")
-        answer = run_agent(
+        result = run_agent_with_token_tracking(
             query=req.query,
             mcp=MCP,
             cfg=CFG,
@@ -197,7 +275,10 @@ def ask(req: AskRequest) -> Dict[str, Any]:
             provider=llm["provider"],
             tools_mode="auto",
         )
-        return {"answer": answer}
+        return {
+            "answer": result["answer"],
+            "token_usage": result["token_usage"]
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -218,7 +299,7 @@ def batch(req: BatchAskRequest) -> Dict[str, Any]:
         site_title = req.site_title if req.site_title is not None else llm.get("site_title")
         outputs: list[Dict[str, Any]] = []
         for q in req.queries:
-            ans = run_agent(
+            result = run_agent_with_token_tracking(
                 query=q,
                 mcp=MCP,
                 cfg=CFG,
@@ -229,7 +310,11 @@ def batch(req: BatchAskRequest) -> Dict[str, Any]:
                 provider=llm["provider"],
                 tools_mode="auto",
             )
-            outputs.append({"query": q, "answer": ans})
+            outputs.append({
+                "query": q,
+                "answer": result["answer"],
+                "token_usage": result["token_usage"]
+            })
         return {"results": outputs}
     except HTTPException:
         raise
@@ -348,6 +433,7 @@ def stream_agent_response(
         max_steps = 25  # Reduced for streaming
         
         while steps < max_steps:
+            print("STEP", steps)
             yield f"data: {json.dumps({'type': 'step', 'message': f'Schritt {steps + 1}: Verarbeite Anfrage...', 'timestamp': time.time()})}\n\n"
             
             used_any_tool = any(m.get("role") == "tool" for m in messages)
@@ -366,6 +452,13 @@ def stream_agent_response(
                 )
                 
                 resp = client.chat.completions.create(**create_kwargs)
+                
+                # Track token usage immediately
+                if resp.usage:
+                    tokens_sent = resp.usage.prompt_tokens
+                    tokens_received = resp.usage.completion_tokens
+                    print(f"[DEBUG] Emitting token usage: {tokens_sent} sent, {tokens_received} received for step {steps}")
+                    yield f"data: {json.dumps({'type': 'token_usage', 'tokens_sent': tokens_sent, 'tokens_received': tokens_received, 'step': steps, 'timestamp': time.time()})}\n\n"
                 
             except Exception as e:
                 yield f"data: {json.dumps({'type': 'error', 'message': f'LLM Fehler: {str(e)}', 'timestamp': time.time()})}\n\n"

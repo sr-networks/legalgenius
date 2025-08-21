@@ -1,10 +1,13 @@
-export const API_BASE = process.env.REACT_APP_API_BASE || 'http://127.0.0.1:8000';
+export const API_BASE = (typeof window !== 'undefined' && (window as any).ENV?.REACT_APP_API_BASE) || 'http://127.0.0.1:8000';
 
 export interface StreamEvent {
-  type: 'thinking' | 'step' | 'tool_thinking' | 'tool_event' | 'final_answer' | 'error' | 'complete';
+  type: 'thinking' | 'step' | 'tool_thinking' | 'tool_event' | 'token_usage' | 'final_answer' | 'error' | 'complete';
   message?: string;
   tool?: string;
   args?: Record<string, any>;
+  tokens_sent?: number;
+  tokens_received?: number;
+  step?: number;
   event?: {
     type: 'tool_start' | 'tool_complete' | 'tool_error';
     tool: string;

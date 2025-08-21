@@ -22,7 +22,7 @@ def load_config() -> dict:
     return {
         "legal_doc_root": "./data/",
         "glob": "**/*.{txt,md}",
-        "max_results": 50,
+        "max_results": 20,
         "context_bytes": 300,
     }
 
@@ -148,6 +148,10 @@ def call_llm(
     except Exception as e:
         raise RuntimeError(f"LLM request failed: {e}")
     try:
+        if completion.usage:
+            tokens_sent = completion.usage.prompt_tokens
+            tokens_received = completion.usage.completion_tokens
+            print(f"[TOKENS] {tokens_sent} sent, {tokens_received} received")
         return completion.choices[0].message.content or ""
     except Exception as e:
         raise RuntimeError(f"LLM response parse error: {e}")
@@ -172,8 +176,8 @@ SYSTEM_PROMPT = (
     "- Verwende zuerst file_search um alle relevanten Dateien zu finden, die die wichtigen Schlagwörter aus der Frage und dem rechtlichen Kontext enthalten." 
     "- Es sind AND und OR Verknüpfungen mehrerer Suchbegriffe möglich. "
     "- Danach benutze search_rg für präzise Fundstellen in einer oder meherer Dateien. "
-    "- Reflektiere dann die Ergebnisse und ob sie für eine Antwort ausreichen."
-    "- Falls nicht ausreichend, erweitere die Suche, erhöhe ggf. max_results/context_lines und versuche die Werkzeuge erneut.\n"
+#    "- Reflektiere dann die Ergebnisse und ob sie für eine Antwort ausreichen."
+#    "- Falls nicht ausreichend, erweitere die Suche, erhöhe ggf. max_results/context_lines und versuche die Werkzeuge erneut.\n"
     "- Bei Gesetzen: Verwende IMMER OR-Verknüpfungen für Vollname und Abkürzung (z.B. 'Bürgerliches Gesetzbuch OR BGB', 'Rechtsanwaltsvergütungsgesetz OR RVG')."
     "- Suche auch mit search_rg in der neueren Rechtsprechung im Ordner urteile_markdown_by_year."
     "- Verwende mehrere Suchstrategien: Einzelwörter, exakte Phrasen, und verwandte Begriffe."
@@ -217,7 +221,7 @@ def _build_tools_spec() -> List[Dict[str, Any]]:
                     "properties": {
                         "query": {"type": "string", "description": "Boolean query (AND/OR, parentheses)"},
                         "glob": {"type": "string", "description": "Glob pattern to match files"},
-                        "max_results": {"type": "integer", "minimum": 10, "description": "Maximum number of results"},
+                        "max_results": {"type": "integer", "minimum": 3, "description": "Maximum number of results"},
                     },
                     "required": ["query"],
                 },
@@ -247,7 +251,7 @@ def _build_tools_spec() -> List[Dict[str, Any]]:
                     "properties": {
                         "query": {"type": "string", "description": "Single keyword"},
                         "file_list": {"type": "array", "items": {"type": "string"}, "description": "File patterns: specific files, folders (e.g. 'gesetze/', 'urteile_markdown_by_year/'), or './' for entire corpus"},
-                        "max_results": {"type": "integer", "minimum": 10, "description": "Maximum number of results per file"},
+                        "max_results": {"type": "integer", "minimum": 3, "description": "Maximum number of results per file"},
                         "context_lines": {"type": "integer", "minimum": 1, "maximum": 10, "description": "Number of context lines"},
                         "regex": {"type": "boolean", "description": "Whether to treat query as regex pattern (default False)"},
                         "case_sensitive": {"type": "boolean", "description": "Whether search is case sensitive (default False)"},
@@ -300,7 +304,7 @@ def run_agent(
         res = mcp.call_tool("file_search", {
             "query": query,
             "glob": glob or cfg.get("glob", "**/*.{txt,md}"),
-            "max_results": max_results or cfg.get("max_results", 50),
+            "max_results": max_results or cfg.get("max_results", 30),
         })
         return json.dumps(res, ensure_ascii=False)
 
@@ -308,7 +312,7 @@ def run_agent(
         res = mcp.call_tool("search_rg", {
             "query": query,
             "file_list": file_list,
-            "max_results": max_results or 20,
+            "max_results": max_results or 10,
             "context_lines": context_lines or 2,
             "regex": regex or False,
             "case_sensitive": case_sensitive or False,
@@ -327,7 +331,7 @@ def run_agent(
             "start": int(start),
             "end": int(end),
             "context": context or cfg.get("context_bytes", 300),
-            "max_lines": max_lines or 20,
+            "max_lines": max_lines or 10,
         })
         return json.dumps(res, ensure_ascii=False)
 
@@ -345,7 +349,7 @@ def run_agent(
 
 
     steps = 0
-    max_steps = 50  # Further reduced to prevent hanging
+    max_steps = 30  # Further reduced to prevent hanging
     while True:
         print ("STEP", steps)
         if steps >= max_steps:
@@ -364,11 +368,15 @@ def run_agent(
                     max_tokens=800,
                     extra_body={"chat_template_kwargs": {"enable_thinking": False}}
                 )
+                if fallback_resp.usage:
+                    tokens_sent = fallback_resp.usage.prompt_tokens
+                    tokens_received = fallback_resp.usage.completion_tokens
+                    print(f"[TOKENS] Fallback - {tokens_sent} sent, {tokens_received} received")
                 fallback_answer = fallback_resp.choices[0].message.content or ""
                 return f"⚠️ **HINWEIS: Diese Antwort basiert NICHT auf spezifischen Rechtsquellen, sondern auf allgemeinem Rechtswissen, da die maximale Anzahl von Rechercheschritten erreicht wurde.**\n\n{fallback_answer}"
             except Exception as e:
                 return f"Konnte keine zufriedenstellende Antwort finden. Die maximale Anzahl von Rechercheschritten wurde erreicht und auch die Fallback-Antwort konnte nicht generiert werden: {e}"
-        print("\nSTEP", steps)
+#        print("\nSTEP", steps)
         used_any_tool = any(m.get("role") == "tool" for m in messages)
         # Ollama's OpenAI-compatible API may not support non-standard values like "required".
         if provider in ("ollama"):
@@ -388,6 +396,10 @@ def run_agent(
                 timeout=30,  # Add 30 second timeout
             )
             resp = client.chat.completions.create(**create_kwargs)
+            if resp.usage:
+                tokens_sent = resp.usage.prompt_tokens
+                tokens_received = resp.usage.completion_tokens
+                print(f"[TOKENS] Step {steps} - {tokens_sent} sent, {tokens_received} received")
 #            print ("RESP", resp)
         except Exception as e:
             return f"LLM create failed: {e}"
@@ -400,8 +412,8 @@ def run_agent(
 
         msg = resp.choices[0].message
         out_text = getattr(msg, "content", None) or getattr(msg, "reasoning_content", None) or getattr(msg, "reasoning", None) or ""
-#        if out_text:
-#            print(out_text, "\n")
+        if out_text:
+            print(out_text, "\n")
         tool_calls = getattr(msg, "tool_calls", None)
 #        print (tool_calls)
         fc = getattr(msg, "function_call", None)

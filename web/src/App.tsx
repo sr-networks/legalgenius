@@ -2,6 +2,7 @@ import React, { useState, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import ReasoningTraceBox from "./components/ReasoningTraceBox";
+import TokenCounter from "./components/TokenCounter";
 
 const API_BASE = "http://127.0.0.1:8000";
 
@@ -12,6 +13,10 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [steps, setSteps] = useState<any[]>([]);
   const controllerRef = useRef<AbortController | null>(null);
+  
+  // Token tracking state
+  const [totalTokensSent, setTotalTokensSent] = useState(0);
+  const [totalTokensReceived, setTotalTokensReceived] = useState(0);
 
   async function ask() {
     setLoading(true);
@@ -53,6 +58,7 @@ export default function App() {
               continue;
             }
             const t = evt.type;
+            console.log("Received event:", t, evt); // Debug logging
             if (t === "final_answer") {
               setAnswer(evt.message || "");
             } else if (t === "error") {
@@ -61,6 +67,12 @@ export default function App() {
             // Collect reasoning/tool traces
             if (t === "thinking" || t === "step" || t === "tool_thinking" || t === "tool_event") {
               setSteps((prev) => [...prev, evt]);
+            }
+            // Track token usage
+            if (t === "token_usage") {
+              console.log("Token usage event:", evt.tokens_sent, "sent,", evt.tokens_received, "received");
+              setTotalTokensSent((prev) => prev + (evt.tokens_sent || 0));
+              setTotalTokensReceived((prev) => prev + (evt.tokens_received || 0));
             }
             if (t === "complete") {
               setLoading(false);
@@ -298,7 +310,14 @@ export default function App() {
               )}
               
               <button
-                onClick={() => { setQuery(""); setAnswer(null); setError(null); }}
+                onClick={() => { 
+                  setQuery(""); 
+                  setAnswer(null); 
+                  setError(null); 
+                  setSteps([]); 
+                  setTotalTokensSent(0); 
+                  setTotalTokensReceived(0); 
+                }}
                 disabled={loading}
                 style={{
                   display: "inline-flex",
@@ -567,6 +586,12 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* Token Counter Widget */}
+        <TokenCounter
+          totalTokensSent={totalTokensSent}
+          totalTokensReceived={totalTokensReceived}
+        />
 
         {/* Footer */}
         <div style={{
