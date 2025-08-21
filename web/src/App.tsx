@@ -134,7 +134,7 @@ export default function App() {
             justifyContent: "center",
             fontSize: "24px",
             boxShadow: "0 4px 16px rgba(102, 126, 234, 0.3)"
-          }}>⚖️</div>
+          }}>⚖</div>
           <div>
             <h1 style={{
               margin: 0,
@@ -277,7 +277,7 @@ export default function App() {
                     animation: "spin 1s linear infinite"
                   }} />
                 )}
-                {loading ? "Recherchiere..." : "🚀 Frage stellen"}
+                {loading ? "Recherchiere..." : "Frage stellen"}
               </button>
 
               {loading && (
@@ -305,7 +305,7 @@ export default function App() {
                     (e.target as HTMLButtonElement).style.background = "#fff";
                   }}
                 >
-                  ⏹️ Abbrechen
+                  Abbrechen
                 </button>
               )}
               
@@ -347,7 +347,7 @@ export default function App() {
                   (e.target as HTMLButtonElement).style.background = "white";
                 }}
               >
-                🗑️ Zurücksetzen
+                Zurücksetzen
               </button>
             </div>
             
@@ -424,7 +424,7 @@ export default function App() {
               <div style={{
                 fontSize: "1.25rem",
                 color: "#dc2626"
-              }}>❌</div>
+              }}>✗</div>
               <div>
                 <h4 style={{
                   margin: "0 0 0.5rem 0",
@@ -469,7 +469,7 @@ export default function App() {
               }}>
                 <span style={{
                   fontSize: "1.5rem"
-                }}>📋</span>
+                }}>◆</span>
                 Antwort
               </h3>
             </div>

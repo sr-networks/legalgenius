@@ -433,7 +433,7 @@ def stream_agent_response(
         max_steps = 25  # Reduced for streaming
         
         while steps < max_steps:
-            print("STEP", steps)
+            print("\nSTEP", steps)
             yield f"data: {json.dumps({'type': 'step', 'message': f'Schritt {steps + 1}: Verarbeite Anfrage...', 'timestamp': time.time()})}\n\n"
             
             used_any_tool = any(m.get("role") == "tool" for m in messages)

@@ -30,13 +30,48 @@ const ReasoningTraceBox: React.FC<ReasoningTraceBoxProps> = ({ steps, isLoading 
     });
   };
 
+  // Process steps to show only current tool execution and completed steps
+  const processSteps = () => {
+    const processed = [];
+    let currentToolInProgress = null;
+    
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+      
+      if (step.type === 'thinking' || step.type === 'step') {
+        // Always keep thinking and step messages
+        processed.push(step);
+      } else if (step.type === 'tool_thinking') {
+        // This starts a new tool execution - replace any previous tool in progress
+        currentToolInProgress = step;
+      } else if (step.type === 'tool_event' && step.event?.type === 'tool_complete') {
+        // Tool completed - add the final result and clear in-progress
+        if (currentToolInProgress) {
+          processed.push({
+            ...currentToolInProgress,
+            event: step.event,
+            type: 'tool_event' as const
+          });
+          currentToolInProgress = null;
+        }
+      }
+    }
+    
+    // Add current tool in progress if any
+    if (currentToolInProgress) {
+      processed.push(currentToolInProgress);
+    }
+    
+    return processed;
+  };
+
   const getStepIcon = (type: string) => {
     switch (type) {
-      case 'thinking': return '🤔';
-      case 'step': return '⚡';
-      case 'tool_thinking': return '🔧';
-      case 'tool_event': return '📊';
-      default: return '💭';
+      case 'thinking': return '●';
+      case 'step': return '→';
+      case 'tool_thinking': return '○';
+      case 'tool_event': return '✓';
+      default: return '•';
     }
   };
 
@@ -98,7 +133,7 @@ const ReasoningTraceBox: React.FC<ReasoningTraceBoxProps> = ({ steps, isLoading 
     <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-4">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-semibold text-gray-700 flex items-center">
-          <span className="mr-2">🔍</span>
+          <span className="mr-2">▶</span>
           Recherche-Verlauf
         </h3>
         {isLoading && (
@@ -110,7 +145,7 @@ const ReasoningTraceBox: React.FC<ReasoningTraceBoxProps> = ({ steps, isLoading 
       </div>
       
       <div className="space-y-2 max-h-64 overflow-y-auto">
-        {steps.map((step, index) => (
+        {processSteps().map((step, index) => (
           <div key={index} className={`p-3 rounded border text-xs ${getStepColor(step.type)}`}>
             <div className="flex items-start justify-between">
               <div className="flex items-start flex-1">
@@ -159,12 +194,12 @@ const ReasoningTraceBox: React.FC<ReasoningTraceBoxProps> = ({ steps, isLoading 
         )}
       </div>
       
-      {steps.length > 0 && (
+      {processSteps().length > 0 && (
         <div className="mt-3 pt-2 border-t border-gray-300">
           <div className="text-xs text-gray-600 flex justify-between">
-            <span>{steps.length} Schritte</span>
+            <span>{processSteps().length} Schritte</span>
             <span>
-              {steps.filter(s => s.type === 'tool_event' && s.event?.type === 'tool_complete').length} Tools verwendet
+              {processSteps().filter(s => s.type === 'tool_event' && s.event?.type === 'tool_complete').length} Tools abgeschlossen
             </span>
           </div>
         </div>
