@@ -21,9 +21,10 @@ interface ReasoningStep {
 interface ReasoningTraceBoxProps {
   steps: ReasoningStep[];
   isLoading: boolean;
+  compact?: boolean; // New compact mode for embedding in loading state
 }
 
-const ReasoningTraceBox: React.FC<ReasoningTraceBoxProps> = ({ steps, isLoading }) => {
+const ReasoningTraceBox: React.FC<ReasoningTraceBoxProps> = ({ steps, isLoading, compact = false }) => {
   const formatTimestamp = (timestamp: number) => {
     return new Date(timestamp * 1000).toLocaleTimeString('de-DE', {
       hour12: false,
@@ -132,6 +133,62 @@ const ReasoningTraceBox: React.FC<ReasoningTraceBoxProps> = ({ steps, isLoading 
     return null;
   }
 
+  // Compact mode - just the traces without container
+  if (compact) {
+    return (
+      <div className="space-y-2">
+        {processSteps().map((step, index) => (
+          <div key={index} className={`p-2 rounded border text-xs ${getStepColor(step.type)}`}>
+            <div className="flex items-start justify-between">
+              <div className="flex items-start flex-1">
+                <span className="text-xs mr-2">{getStepIcon(step.type)}</span>
+                <div className="flex-1">
+                  <div className="font-medium text-xs mb-1">
+                    {step.message}
+                    {step.tool && (
+                      <span className="ml-2 text-xs bg-white bg-opacity-50 px-1 py-0.5 rounded font-mono">
+                        {step.tool}
+                      </span>
+                    )}
+                  </div>
+                  
+                  {step.content && (
+                    <div className="text-xs bg-white bg-opacity-60 p-2 rounded mt-1 border-l-2 border-indigo-300">
+                      <div className="font-medium mb-1 text-indigo-700">Reasoning:</div>
+                      <div className="whitespace-pre-wrap font-mono text-xs leading-relaxed max-h-20 overflow-y-auto">
+                        {step.content.length > 200 ? step.content.substring(0, 200) + '...' : step.content}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {step.args && Object.keys(step.args).length > 0 && (
+                    <div className="mb-1">
+                      {formatToolArgs(step.args)}
+                    </div>
+                  )}
+                  
+                  {step.event?.type === 'tool_complete' && step.event.result && (
+                    <div className="text-xs bg-white bg-opacity-40 p-1 rounded mt-1">
+                      <div className="font-medium mb-1">Ergebnis:</div>
+                      <div className="font-mono text-xs">
+                        {formatToolResult(step.event.result)}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+              
+              <span className="text-xs opacity-60 ml-2">
+                {formatTimestamp(step.timestamp)}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // Full mode - complete component with header
   return (
     <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-4">
       <div className="flex items-center justify-between mb-3">

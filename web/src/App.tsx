@@ -361,7 +361,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* Loading State */}
+        {/* Loading State with Integrated Reasoning Traces */}
         {loading && (
           <div style={{
             background: "rgba(255, 255, 255, 0.95)",
@@ -375,7 +375,8 @@ export default function App() {
             <div style={{
               display: "flex",
               alignItems: "center",
-              gap: "1.5rem"
+              gap: "1.5rem",
+              marginBottom: steps.length > 0 ? "2rem" : "0"
             }}>
               <div style={{
                 width: "48px",
@@ -399,11 +400,22 @@ export default function App() {
                 }}>Dies kann einige Momente dauern</p>
               </div>
             </div>
+            
+            {/* Current Step Reasoning Traces */}
+            {steps.length > 0 && (
+              <div style={{
+                borderTop: "1px solid #e2e8f0",
+                paddingTop: "1.5rem"
+              }}>
+                <ReasoningTraceBox 
+                  steps={steps.slice(-3)} // Show only last 3 steps to avoid clutter
+                  isLoading={loading}
+                  compact={true} // Add compact mode prop
+                />
+              </div>
+            )}
           </div>
         )}
-
-        {/* Reasoning Trace */}
-        <ReasoningTraceBox steps={steps} isLoading={loading} />
 
         {/* Error Message */}
         {error && (

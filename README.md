@@ -1,10 +1,10 @@
 # LegalGenius
 
-A comprehensive German legal research and question-answering system that provides AI-powered search capabilities over German federal laws, regulations, and court decisions. Available as both a modern web interface and command-line tool.
+A comprehensive German legal research and question-answering system that provides AI-powered search capabilities over German federal laws, regulations, and court decisions. Features Elasticsearch-powered search with German language optimization and real-time reasoning traces. Available as both a modern web interface and command-line tool.
 
 ## Overview
 
-LegalGenius combines a comprehensive corpus of German legal documents with an intelligent search agent to help users find relevant legal information. The system uses a Model Context Protocol (MCP) server architecture with advanced search capabilities powered by ripgrep and natural language processing.
+LegalGenius combines a comprehensive corpus of German legal documents with an intelligent search agent to help users find relevant legal information. The system uses a Model Context Protocol (MCP) server architecture with Elasticsearch-powered search capabilities optimized for German legal text processing and natural language understanding.
 
 ## Features
 
@@ -13,11 +13,33 @@ LegalGenius combines a comprehensive corpus of German legal documents with an in
 - **Court Decision Archive**: Extensive collection of court decisions organized by year (1970-2029)
 - **Intelligent Search**: Boolean query support with AND/OR operators and parentheses
 - **Multi-Provider LLM Support**: Compatible with OpenRouter, Nebius, and Ollama
-- **Advanced Text Search**: Powered by Elasticsearch for fast, scalable search with ripgrep for precise text matching
+- **Advanced Text Search**: Powered by Elasticsearch for fast, scalable search with German language optimization and relevance ranking
 - **Context-Aware Results**: Provides relevant excerpts with configurable context
 - **German Language Optimized**: Designed specifically for German legal terminology and structure
 - **Modular Architecture**: Supports web UI, CLI, and batch processing
 - **Real-time Streaming**: Live updates showing tool usage and reasoning steps
+- **Reasoning Traces**: View LLM internal reasoning process in real-time via web interface
+
+## Recent Improvements
+
+### Elasticsearch Integration (Latest)
+- **Primary Search Engine**: Replaced ripgrep with Elasticsearch as the main search backend
+- **German Language Analysis**: Custom German text processing with stemming and compound word handling  
+- **Performance**: Millisecond search response times across the entire legal corpus
+- **Relevance Scoring**: Advanced ranking algorithms for better result quality
+- **Document Type Filtering**: Search specifically in laws (gesetze) or court decisions (urteile)
+- **Fuzzy Matching**: Handle typos and variations in search queries automatically
+
+### Architecture Enhancements
+- **Unified Tool Dispatching**: Shared dispatcher functions between CLI and web interfaces
+- **Elasticsearch Tool Integration**: New `elasticsearch_search` tool with comprehensive result formatting
+- **Reasoning Visibility**: Real-time streaming of LLM reasoning content in web interface
+- **Code Deduplication**: Consolidated tool handling logic for better maintainability
+
+### Streamlined Search Tools
+- **Primary Tool**: `elasticsearch_search` now handles most search operations
+- **Deprecated Tool**: Removed `search_rg` in favor of more powerful Elasticsearch capabilities
+- **Enhanced Results**: Better structured results with metadata, relevance scores, and line matches
 
 ## Quick Start
 
@@ -215,10 +237,12 @@ make server
 
 ### Available Tools
 
-- **`file_search`**: Boolean content search across the legal corpus
-- **`search_rg`**: Precise line-by-line search using ripgrep
-- **`read_file_range`**: Extract text snippets with configurable context
+- **`elasticsearch_search`** (Primary): Fast full-text search across German legal corpus with relevance ranking and fuzzy matching. Supports document type filtering (laws/court decisions) and comprehensive metadata extraction
+- **`file_search`**: Boolean content search across the legal corpus using AND/OR operators
+- **`read_file_range`**: Extract text snippets with configurable context around search results
 - **`list_paths`**: Browse available documents and directories
+
+Note: The ripgrep-based `search_rg` tool has been removed in favor of the more powerful Elasticsearch integration for improved performance and German language optimization.
 
 ### API Endpoints
 
