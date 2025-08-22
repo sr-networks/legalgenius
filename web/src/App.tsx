@@ -189,6 +189,7 @@ export default function App() {
                 style={{
                   width: "100%",
                   padding: "1.25rem",
+                  paddingRight: "0rem", // Extra right padding to balance with character counter
                   fontSize: "1rem",
                   lineHeight: 1.6,
                   border: "2px solid #e2e8f0",

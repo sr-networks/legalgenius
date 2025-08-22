@@ -36,6 +36,12 @@ LegalGenius combines a comprehensive corpus of German legal documents with an in
 - **Reasoning Visibility**: Real-time streaming of LLM reasoning content in web interface
 - **Code Deduplication**: Consolidated tool handling logic for better maintainability
 
+### User Interface Improvements
+- **Integrated Reasoning Traces**: Reasoning content now appears directly in the "Durchsuche Rechtsquellen" loading widget
+- **Compact Display Mode**: Streamlined trace visualization with automatic content truncation
+- **Progressive Disclosure**: Shows only the last 3 steps to maintain focus on current progress
+- **Real-time Updates**: Live streaming of tool usage and AI reasoning steps during search
+
 ### Streamlined Search Tools
 - **Primary Tool**: `elasticsearch_search` now handles most search operations
 - **Deprecated Tool**: Removed `search_rg` in favor of more powerful Elasticsearch capabilities
@@ -160,9 +166,11 @@ make web-dev
 
 The web interface provides:
 - Clean, modern interface for legal questions
-- Real-time responses from the AI system
+- Real-time responses with integrated reasoning traces
+- Live progress updates during search operations
 - Direct access to German legal document corpus
-- Error handling and loading states
+- Error handling and intelligent loading states
+- Compact reasoning display embedded in loading widget
 
 #### Command Line Interface
 
@@ -209,8 +217,9 @@ make server
 
 1. **Web Interface** (`web/`):
    - React TypeScript frontend with Vite bundling
-   - Real-time streaming using Server-Sent Events
-   - Modern UI with Tailwind CSS
+   - Real-time streaming using Server-Sent Events with integrated reasoning traces
+   - Modern UI with Tailwind CSS and compact progress displays
+   - Embedded reasoning visualization in loading states
    - Local storage for configuration and chat history
 
 2. **API Server** (`web_server/`):
