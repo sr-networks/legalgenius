@@ -596,6 +596,7 @@ def elasticsearch_search(
     query: str,
     document_type: str = "all",
     max_results: int = 10,
+    context_lines: int = 2,
     es_host: str = "localhost",
     es_port: int = 9200
 ) -> dict:
@@ -611,6 +612,7 @@ def elasticsearch_search(
     - query: Search terms or phrases (e.g., "Kündigungsfrist", "BGB § 573", "fristlose Kündigung")
     - document_type: Type of documents to search - "all" (default), "gesetze" (laws), "urteile" (court decisions)
     - max_results: Maximum number of results to return (default 10)
+    - context_lines: Number of lines before and after each match to include (default 2)
     - es_host: Elasticsearch host (default localhost)
     - es_port: Elasticsearch port (default 9200)
 
@@ -691,7 +693,7 @@ def elasticsearch_search(
         for hit in hits.get('hits', []):
             source = hit['_source']
             
-            # Extract line matches from content
+            # Extract line matches from content with context
             line_matches = []
             content = source.get('content', '')
             if content:
@@ -699,16 +701,33 @@ def elasticsearch_search(
                 query_terms = query.lower().split()
                 content_start_line = source.get('content_start_line', 1)
                 
-                for i, line in enumerate(lines[:20], 1):  # Check first 20 lines for performance
+                matching_line_indices = []
+                for i, line in enumerate(lines[:20], 0):  # Check first 20 lines for performance
                     line_lower = line.lower()
                     if any(term in line_lower for term in query_terms):
-                        actual_line_num = content_start_line + i - 1 if content_start_line else i
-                        line_matches.append({
-                            "line_number": actual_line_num,
-                            "text": line.strip()[:200]  # Limit line length
-                        })
-                        if len(line_matches) >= 3:  # Limit matches per document
+                        matching_line_indices.append(i)
+                        if len(matching_line_indices) >= 3:  # Limit matches per document
                             break
+                
+                # Build context around each matching line
+                for match_idx in matching_line_indices:
+                    start_idx = max(0, match_idx - context_lines)
+                    end_idx = min(len(lines), match_idx + context_lines + 1)
+                    
+                    context_lines_list = []
+                    for ctx_idx in range(start_idx, end_idx):
+                        actual_line_num = content_start_line + ctx_idx if content_start_line else ctx_idx + 1
+                        is_match_line = (ctx_idx == match_idx)
+                        context_lines_list.append({
+                            "line_number": actual_line_num,
+                            "text": lines[ctx_idx].strip()[:200],
+                            "is_match": is_match_line
+                        })
+                    
+                    line_matches.append({
+                        "match_line": content_start_line + match_idx if content_start_line else match_idx + 1,
+                        "context": context_lines_list
+                    })
             
             # Create content preview from highlights or first part of content
             content_preview = ""

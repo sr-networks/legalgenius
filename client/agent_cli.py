@@ -239,6 +239,7 @@ def _build_tools_spec() -> List[Dict[str, Any]]:
                         "query": {"type": "string", "description": "Search terms or phrases (e.g., 'Kündigungsfrist', 'BGB § 573')"},
                         "document_type": {"type": "string", "enum": ["all", "gesetze", "urteile"], "description": "Type of documents: 'all' (default), 'gesetze' (laws only), 'urteile' (court decisions only)"},
                         "max_results": {"type": "integer", "minimum": 3, "maximum": 50, "description": "Maximum number of results (default 10)"},
+                        "context_lines": {"type": "integer", "minimum": 0, "maximum": 10, "description": "Number of lines before and after each match to include (default 2)"},
                     },
                     "required": ["query"],
                 },
@@ -351,11 +352,12 @@ def build_dispatch_functions(mcp: MCPClient, cfg: dict) -> Dict[str, Any]:
         })
         return json.dumps(res, ensure_ascii=False)
 
-    def dispatch_elasticsearch_search(query: str, document_type: str = "all", max_results: int = 10) -> str:
+    def dispatch_elasticsearch_search(query: str, document_type: str = "all", max_results: int = 10, context_lines: int = 2) -> str:
         res = mcp.call_tool("elasticsearch_search", {
             "query": query,
             "document_type": document_type,
             "max_results": max_results,
+            "context_lines": context_lines,
         })
         return json.dumps(res, ensure_ascii=False)
 

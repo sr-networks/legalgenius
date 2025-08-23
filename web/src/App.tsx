@@ -4,7 +4,8 @@ import remarkGfm from "remark-gfm";
 import ReasoningTraceBox from "./components/ReasoningTraceBox";
 import TokenCounter from "./components/TokenCounter";
 
-const API_BASE = "http://127.0.0.1:8000";
+// Use Vite dev proxy (see web/vite.config.ts) so this works locally and via ngrok
+const API_BASE = "/api";
 
 export default function App() {
   const [query, setQuery] = useState("");
@@ -84,7 +85,23 @@ export default function App() {
       if (e?.name === 'AbortError') {
         // user aborted; no error toast
       } else {
-        setError(e?.message || String(e));
+        // Fallback to non-streaming endpoint (works better behind some proxies like ngrok)
+        try {
+          const res2 = await fetch(`${API_BASE}/ask`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ query }),
+            signal: controllerRef.current?.signal,
+          });
+          if (!res2.ok) {
+            const data2 = await res2.json().catch(() => ({}));
+            throw new Error(data2?.detail || `HTTP ${res2.status}`);
+          }
+          const data = await res2.json();
+          setAnswer(data?.answer ?? "");
+        } catch (e2: any) {
+          setError(e2?.message || String(e2));
+        }
       }
     } finally {
       setLoading(false);
