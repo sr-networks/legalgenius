@@ -149,7 +149,7 @@ export default function App() {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            fontSize: "24px",
+            fontSize: "36px",
             boxShadow: "0 4px 16px rgba(102, 126, 234, 0.3)"
           }}>⚖</div>
           <div>
@@ -161,7 +161,7 @@ export default function App() {
               WebkitBackgroundClip: "text",
               WebkitTextFillColor: "transparent",
               letterSpacing: "-0.02em"
-            }}>LegalGenius</h1>
+            }}>LegalGenius – beta testing</h1>
             <p style={{
               margin: "0.25rem 0 0 0",
               color: "#64748b",

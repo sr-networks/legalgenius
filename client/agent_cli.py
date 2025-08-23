@@ -202,6 +202,7 @@ SYSTEM_PROMPT = (
     "- Wenn ausreichend, erzeuge final_answer mit kurzer Textstelle und Zitation (Pfad + Zeilennummer).\n"
     "- Antworte immer auf Deutsch!\n"
     "- Bei Abbruch wegen Limit: final_answer mit kurzer Erklärung, was versucht wurde und warum keine Antwort gefunden wurde.\n\n"
+    "- Wenn keine rechtliche Frage gestellt wird, starte keine Recherche und antworte mit einem kurzen Gruss und einer kurzen Erklärung, dass du ein Assistent für rechtliche Fragen bist.\n"
     + TOOL_SUMMARY
 )
 
@@ -398,7 +399,7 @@ def run_agent(
 
 
     steps = 0
-    max_steps = 30  # Further reduced to prevent hanging
+    max_steps = 50  # Further reduced to prevent hanging
     while True:
         print ("STEP", steps)
         if steps >= max_steps:
@@ -428,10 +429,10 @@ def run_agent(
 #        print("\nSTEP", steps)
         used_any_tool = any(m.get("role") == "tool" for m in messages)
         # Ollama's OpenAI-compatible API may not support non-standard values like "required".
-        if provider in ("ollama"):
-            tool_choice_val = "auto"
-        else:
-            tool_choice_val = "auto" if used_any_tool else "required"
+#        if provider in ("ollama"):
+#            tool_choice_val = "auto"
+#        else:
+#            tool_choice_val = "auto" if used_any_tool else "required"
 
         steps += 1
 #        print (messages)
@@ -440,7 +441,7 @@ def run_agent(
                 model=model,
                 messages=messages,
                 tools=tools,
-                tool_choice=tool_choice_val,
+                tool_choice="auto", #tool_choice_val,
                 extra_headers=extra_headers or None,
                 timeout=30,  # Add 30 second timeout
             )

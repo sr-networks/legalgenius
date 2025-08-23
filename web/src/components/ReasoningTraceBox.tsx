@@ -136,7 +136,7 @@ const ReasoningTraceBox: React.FC<ReasoningTraceBoxProps> = ({ steps, isLoading,
   // Compact mode - just the traces without container
   if (compact) {
     return (
-      <div className="space-y-2">
+      <div className="space-y-2 max-h-48 overflow-y-auto md:max-h-none">
         {processSteps().map((step, index) => (
           <div key={index} className={`p-2 rounded border text-xs ${getStepColor(step.type)}`}>
             <div className="flex items-start justify-between">

@@ -46,6 +46,22 @@ RESOLVED_MODEL: Optional[str] = None
 RESOLVED_REFERER: Optional[str] = None
 RESOLVED_SITE_TITLE: Optional[str] = None
 
+# ---- JSONL logging (./logs/api) ----
+LOG_DIR = Path("./logs/api")
+
+def _log_interaction(event: Dict[str, Any]) -> None:
+    """Append a single JSON event to a daily-rotated JSONL file in ./logs/api.
+    Fail-safe: swallow errors to avoid impacting API responses.
+    """
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        fname = LOG_DIR / f"interactions-{time.strftime('%Y-%m-%d')}.jsonl"
+        with fname.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(event, ensure_ascii=False) + "\n")
+    except Exception:
+        # Do not raise logging errors
+        pass
+
 
 class AskRequest(BaseModel):
     query: str
@@ -264,6 +280,7 @@ def ask(req: AskRequest) -> Dict[str, Any]:
 
     # Allow request-level override of provider/model
     try:
+        start_ts = time.time()
         llm = _resolve_llm(provider=req.provider or RESOLVED_PROVIDER, model_override=req.model)
         client = llm["client"]
         model = llm["model"]
@@ -280,10 +297,28 @@ def ask(req: AskRequest) -> Dict[str, Any]:
             provider=llm["provider"],
             tools_mode="auto",
         )
-        return {
+        resp = {
             "answer": result["answer"],
             "token_usage": result["token_usage"]
         }
+        end_ts = time.time()
+        try:
+            _log_interaction({
+                "timestamp": end_ts,
+                "timestamp_iso": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(end_ts)),
+                "duration_ms": int((end_ts - start_ts) * 1000),
+                "endpoint": "ask",
+                "provider": llm["provider"],
+                "model": model,
+                "referer": referer,
+                "site_title": site_title,
+                "query": req.query,
+                "answer_preview": (result.get("answer") or "")[:2000],
+                "token_usage": result.get("token_usage", {}),
+            })
+        except Exception:
+            pass
+        return resp
     except HTTPException:
         raise
     except Exception as e:
@@ -297,13 +332,15 @@ def batch(req: BatchAskRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=503, detail="Server is not ready")
 
     try:
+        batch_start = time.time()
         llm = _resolve_llm(provider=req.provider or RESOLVED_PROVIDER, model_override=req.model)
         client = llm["client"]
         model = llm["model"]
         referer = req.referer if req.referer is not None else llm.get("referer")
         site_title = req.site_title if req.site_title is not None else llm.get("site_title")
         outputs: list[Dict[str, Any]] = []
-        for q in req.queries:
+        for idx, q in enumerate(req.queries):
+            start_ts = time.time()
             result = run_agent_with_token_tracking(
                 query=q,
                 mcp=MCP,
@@ -320,6 +357,25 @@ def batch(req: BatchAskRequest) -> Dict[str, Any]:
                 "answer": result["answer"],
                 "token_usage": result["token_usage"]
             })
+            end_ts = time.time()
+            try:
+                _log_interaction({
+                    "timestamp": end_ts,
+                    "timestamp_iso": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(end_ts)),
+                    "duration_ms": int((end_ts - start_ts) * 1000),
+                    "endpoint": "batch_item",
+                    "batch_size": len(req.queries),
+                    "batch_index": idx,
+                    "provider": llm["provider"],
+                    "model": model,
+                    "referer": referer,
+                    "site_title": site_title,
+                    "query": q,
+                    "answer_preview": (result.get("answer") or "")[:2000],
+                    "token_usage": result.get("token_usage", {}),
+                })
+            except Exception:
+                pass
         return {"results": outputs}
     except HTTPException:
         raise
@@ -383,6 +439,10 @@ def stream_agent_response(
         resolved_model = llm["model"]
         referer = llm.get("referer")
         site_title = llm.get("site_title")
+        start_ts = time.time()
+        total_tokens_sent = 0
+        total_tokens_received = 0
+        final_answer_logged: Optional[str] = None
         
         # Send initial status
         yield f"data: {json.dumps({'type': 'thinking', 'message': 'Analysiere die Frage und plane die Suche...', 'timestamp': time.time()})}\n\n"
@@ -411,7 +471,7 @@ def stream_agent_response(
             yield f"data: {json.dumps({'type': 'step', 'message': f'Schritt {steps + 1}: Verarbeite Anfrage...', 'timestamp': time.time()})}\n\n"
             
             used_any_tool = any(m.get("role") == "tool" for m in messages)
-            tool_choice_val = "auto" if used_any_tool else "required" if provider != "ollama" else "auto"
+#            tool_choice_val = "auto" if used_any_tool else "required" if provider != "ollama" else "auto"
             
             steps += 1
             
@@ -420,7 +480,7 @@ def stream_agent_response(
                     model=resolved_model,
                     messages=messages,
                     tools=tools,
-                    tool_choice=tool_choice_val,
+                    tool_choice="auto", #tool_choice_val,
                     extra_headers=extra_headers or None,
                     timeout=30
                 )
@@ -432,6 +492,8 @@ def stream_agent_response(
                     tokens_sent = resp.usage.prompt_tokens
                     tokens_received = resp.usage.completion_tokens
                     print(f"[DEBUG] Emitting token usage: {tokens_sent} sent, {tokens_received} received for step {steps}")
+                    total_tokens_sent += tokens_sent
+                    total_tokens_received += tokens_received
                     yield f"data: {json.dumps({'type': 'token_usage', 'tokens_sent': tokens_sent, 'tokens_received': tokens_received, 'step': steps, 'timestamp': time.time()})}\n\n"
                 
             except Exception as e:
@@ -526,6 +588,29 @@ def stream_agent_response(
             # Final response
             final_answer = msg.content or ""
             yield f"data: {json.dumps({'type': 'final_answer', 'message': final_answer, 'timestamp': time.time()})}\n\n"
+            # Log the interaction upon final answer
+            end_ts = time.time()
+            try:
+                _log_interaction({
+                    "timestamp": end_ts,
+                    "timestamp_iso": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(end_ts)),
+                    "duration_ms": int((end_ts - start_ts) * 1000),
+                    "endpoint": "stream",
+                    "provider": provider,
+                    "model": resolved_model,
+                    "referer": referer,
+                    "site_title": site_title,
+                    "query": query,
+                    "answer_preview": (final_answer or "")[:2000],
+                    "token_usage": {
+                        "total_tokens_sent": total_tokens_sent,
+                        "total_tokens_received": total_tokens_received,
+                        "total_tokens": total_tokens_sent + total_tokens_received,
+                    },
+                    "steps": steps,
+                })
+            except Exception:
+                pass
             break
             
         if steps >= max_steps:
