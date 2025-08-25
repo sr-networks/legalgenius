@@ -552,38 +552,97 @@ def file_search(
     return {"files": matched}
 
 
-def read_file_range(path: str, start: int, end: int, context: int | None = None, max_lines: int | None = 20) -> dict:
-    """Read and return a UTF-8 decoded slice around a byte range.
+def read_file_range(path: str, start: int | None = None, end: int | None = None, context: int | None = None, max_lines: int | None = 20, line_number: int | None = None, context_lines: int | None = None) -> dict:
+    """Read and return a UTF-8 decoded slice around a byte range or line range.
+
+    Two modes of operation:
+    1. Byte-based (legacy): Provide start, end byte positions with optional context bytes
+    2. Line-based (recommended): Provide line_number with optional context_lines
 
     Parameters:
     - path: File path relative to the sandbox root
+    
+    Byte-based mode:
     - start, end: Absolute byte offsets for the match range
     - context: Optional number of extra bytes to include on both sides
       (defaults to Config.context_bytes when None)
+    
+    Line-based mode:
+    - line_number: Line number to center the range around (1-based)
+    - context_lines: Number of lines to include before and after the target line (default 2)
+    - max_lines: Maximum number of lines to return (default 20)
     """
-    context = _config.context_bytes if context is None else int(context)
     abs_path = _sandbox.resolve_inside(path)
-    start = max(0, int(start) - context)
-    end = int(end) + context
-    data: bytes
-    with abs_path.open("rb") as f:
-        file_bytes = f.read()
-    start = max(0, min(start, len(file_bytes)))
-    end = max(start, min(end, len(file_bytes)))
-    text = file_bytes[start:end].decode("utf-8", errors="replace")
-    # Enforce maximum number of lines if requested
-    if max_lines is not None:
-        try:
-            ml = int(max_lines)
-        except Exception:
-            ml = 20
-        if ml > 0:
+    
+    # Determine which mode we're in
+    if line_number is not None:
+        # Line-based mode
+        context_lines = 2 if context_lines is None else int(context_lines)
+        max_lines = 20 if max_lines is None else int(max_lines)
+        
+        # Calculate line range
+        start_line = max(1, line_number - context_lines)
+        end_line = line_number + context_lines
+        
+        # Convert to byte positions
+        start_byte = _sandbox.line_start_offset(abs_path, start_line)
+        end_byte = _sandbox.line_start_offset(abs_path, end_line + 1)  # +1 to include the end line
+        
+        # Read the file content
+        with abs_path.open("rb") as f:
+            file_bytes = f.read()
+        
+        # Ensure we don't go beyond file boundaries
+        start_byte = max(0, min(start_byte, len(file_bytes)))
+        end_byte = max(start_byte, min(end_byte, len(file_bytes)))
+        
+        text = file_bytes[start_byte:end_byte].decode("utf-8", errors="replace")
+        
+        # Enforce maximum number of lines if requested
+        if max_lines > 0:
             lines = text.splitlines(keepends=True)
-            if len(lines) > ml:
-                text = "".join(lines[:ml])
+            if len(lines) > max_lines:
+                text = "".join(lines[:max_lines])
                 # Adjust end offset to match truncated UTF-8 length
-                end = start + len(text.encode("utf-8"))
-    return {"path": Path(path).as_posix(), "start": start, "end": end, "text": text}
+                end_byte = start_byte + len(text.encode("utf-8"))
+        
+        return {
+            "path": Path(path).as_posix(), 
+            "start": start_byte, 
+            "end": end_byte, 
+            "text": text,
+            "line_range": [start_line, min(start_line + len(text.splitlines()) - 1, end_line)]
+        }
+    
+    else:
+        # Byte-based mode (legacy)
+        if start is None or end is None:
+            raise ValueError("Either provide line_number+context_lines OR start+end byte positions")
+            
+        context = _config.context_bytes if context is None else int(context)
+        start = max(0, int(start) - context)
+        end = int(end) + context
+        
+        with abs_path.open("rb") as f:
+            file_bytes = f.read()
+        start = max(0, min(start, len(file_bytes)))
+        end = max(start, min(end, len(file_bytes)))
+        text = file_bytes[start:end].decode("utf-8", errors="replace")
+        
+        # Enforce maximum number of lines if requested
+        if max_lines is not None:
+            try:
+                ml = int(max_lines)
+            except Exception:
+                ml = 20
+            if ml > 0:
+                lines = text.splitlines(keepends=True)
+                if len(lines) > ml:
+                    text = "".join(lines[:ml])
+                    # Adjust end offset to match truncated UTF-8 length
+                    end = start + len(text.encode("utf-8"))
+        
+        return {"path": Path(path).as_posix(), "start": start, "end": end, "text": text}
 
 
 def list_paths(subdir: str = ".") -> dict:

@@ -62,9 +62,23 @@ class MCPClient:
             if tool == "read_file_range":
                 path = (result or {}).get("path") or args.get("path")
                 text = (result or {}).get("text", "")
-                ln = args.get("start")
-                le = args.get("end")
-                return f"tool: {tool}\npath: {path}\nresult: {text}\nline: {ln}-{le}"
+                
+                # Check if we're using line-based or byte-based mode
+                if args.get("line_number") is not None:
+                    line_num = args.get("line_number")
+                    context_lines = args.get("context_lines", 2)
+                    line_range = (result or {}).get("line_range", [])
+                    if line_range:
+                        range_str = f"lines {line_range[0]}-{line_range[1]} (center: {line_num}, context: {context_lines})"
+                    else:
+                        range_str = f"line {line_num} (context: {context_lines})"
+                else:
+                    # Byte-based mode
+                    start_byte = args.get("start") or (result or {}).get("start")
+                    end_byte = args.get("end") or (result or {}).get("end") 
+                    range_str = f"bytes {start_byte}-{end_byte}"
+                
+                return f"tool: {tool}\npath: {path}\nresult: {text}\n{range_str}"
             if tool == "search_rg":
                 matches = (result or {}).get("matches", [])
                 q = args.get("query")
@@ -299,17 +313,18 @@ def _build_tools_spec() -> List[Dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "read_file_range",
-                "description": "Read a UTF-8 snippet around a byte range with optional context.",
+                "description": "Read a UTF-8 snippet around a byte range or line number. Two modes: 1) Line-based (recommended): provide line_number + context_lines, 2) Byte-based: provide start + end byte positions.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string"},
-                        "start": {"type": "integer", "minimum": 0},
-                        "end": {"type": "integer", "minimum": 0},
-#                        "context": {"type": "integer", "minimum": 0},
-#                        "max_lines": {"type": "integer", "description": "Maximum number of lines to return (default 20)"},
+                        "path": {"type": "string", "description": "File path relative to document root"},
+                        "line_number": {"type": "integer", "minimum": 1, "description": "Line number to read around (1-based). Use this mode for elasticsearch results."},
+                        "context_lines": {"type": "integer", "minimum": 0, "description": "Number of lines before and after to include (default 2)"},
+                        "start": {"type": "integer", "minimum": 0, "description": "Start byte position (legacy mode)"},
+                        "end": {"type": "integer", "minimum": 0, "description": "End byte position (legacy mode)"},
+                        "max_lines": {"type": "integer", "minimum": 1, "description": "Maximum number of lines to return (default 20)"},
                     },
-                    "required": ["path", "start", "end"],
+                    "required": ["path"],
                 },
             },
         },
@@ -343,14 +358,24 @@ def build_dispatch_functions(mcp: MCPClient, cfg: dict) -> Dict[str, Any]:
         })
         return json.dumps(res, ensure_ascii=False)
 
-    def dispatch_read_file_range(path: str, start: int, end: int, context: Optional[int] = None, max_lines: Optional[int] = None) -> str:
-        res = mcp.call_tool("read_file_range", {
-            "path": path,
-            "start": int(start),
-            "end": int(end),
-            "context": context or cfg.get("context_bytes", 300),
-            "max_lines": max_lines or 10,
-        })
+    def dispatch_read_file_range(path: str, start: int = None, end: int = None, context: Optional[int] = None, max_lines: Optional[int] = None, line_number: Optional[int] = None, context_lines: Optional[int] = None) -> str:
+        params = {"path": path}
+        
+        # Line-based mode
+        if line_number is not None:
+            params["line_number"] = int(line_number)
+            params["context_lines"] = context_lines or 2
+            params["max_lines"] = max_lines or 10
+        # Byte-based mode
+        else:
+            if start is None or end is None:
+                raise ValueError("Either provide line_number+context_lines OR start+end byte positions")
+            params["start"] = int(start)
+            params["end"] = int(end)
+            params["context"] = context or cfg.get("context_bytes", 300)
+            params["max_lines"] = max_lines or 10
+        
+        res = mcp.call_tool("read_file_range", params)
         return json.dumps(res, ensure_ascii=False)
 
     def dispatch_elasticsearch_search(query: str, document_type: str = "all", max_results: int = 10, context_lines: int = 2) -> str:

@@ -464,7 +464,7 @@ def stream_agent_response(
         ]
         
         steps = 0
-        max_steps = 25  # Reduced for streaming
+        max_steps = 50  # Reduced for streaming
         
         while steps < max_steps:
             print("\nSTEP", steps)
