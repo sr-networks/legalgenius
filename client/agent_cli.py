@@ -424,7 +424,7 @@ def run_agent(
 
 
     steps = 0
-    max_steps = 50  # Further reduced to prevent hanging
+    max_steps = 100  # Further reduced to prevent hanging
     while True:
         print ("STEP", steps)
         if steps >= max_steps:
@@ -468,7 +468,7 @@ def run_agent(
                 tools=tools,
                 tool_choice="auto", #tool_choice_val,
                 extra_headers=extra_headers or None,
-                timeout=30,  # Add 30 second timeout
+                timeout=120,  # Add 30 second timeout
             )
             resp = client.chat.completions.create(**create_kwargs)
             if resp.usage:
@@ -540,7 +540,7 @@ def run_agent(
             continue
 
         # Otherwise we're done
-        return msg.content or ""
+        return "<final>" + (msg.content or "") + "</final>"
 
 
 def main():
