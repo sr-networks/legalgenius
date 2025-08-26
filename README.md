@@ -10,7 +10,7 @@ LegalGenius combines a comprehensive corpus of German legal documents with an in
 
 - **Modern Web Interface**: React-based frontend with real-time streaming responses
 - **Comprehensive Legal Database**: Complete collection of German federal laws and regulations (Bundesgesetze und -verordnungen) in Markdown format
-- **Court Decision Archive**: Extensive collection of court decisions organized by year (1970-2029)
+- **Court Decision Archive**: Extensive collection of court decisions organized by year (1970-2022)
 - **Intelligent Search**: Boolean query support with AND/OR operators and parentheses
 - **Multi-Provider LLM Support**: Compatible with OpenRouter, Nebius, and Ollama
 - **Advanced Text Search**: Powered by Elasticsearch for fast, scalable search with German language optimization and relevance ranking
@@ -39,7 +39,7 @@ LegalGenius combines a comprehensive corpus of German legal documents with an in
 ### User Interface Improvements
 - **Integrated Reasoning Traces**: Reasoning content now appears directly in the "Durchsuche Rechtsquellen" loading widget
 - **Compact Display Mode**: Streamlined trace visualization with automatic content truncation
-- **Progressive Disclosure**: Shows only the last 3 steps to maintain focus on current progress
+- **Progressive Disclosure**: Shows only the last step to maintain focus on current progress
 - **Real-time Updates**: Live streaming of tool usage and AI reasoning steps during search
 
 ### Streamlined Search Tools
@@ -116,7 +116,7 @@ make web-dev
 ```bash
 export LLM_PROVIDER="nebius"
 export NEBIUS_API_KEY="your-api-key"
-export NEBIUS_MODEL="zai-org/GLM-4.5"
+export NEBIUS_MODEL="zai-org/GLM-4.5"  # recommended
 ```
 
 **For OpenRouter:**
