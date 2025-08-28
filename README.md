@@ -670,6 +670,50 @@ Legal documents should be placed in the appropriate subdirectory within `data/`:
 
 All documents must be in Markdown format (`.md`) or plain text (`.txt`).
 
+### Court Decisions Dataset (Open Legal Data)
+
+Use `scrapers/export_urteile_markdown_by_year.py` to download the Open Legal Data dump and generate one Markdown file per year.
+
+**Outputs:**
+- One file per year: `<out>/<YYYY>.md` with all decisions sorted by date (desc)
+- Index file: `<out>/index.md`
+
+Each yearly file starts with a metadata block and includes sections like title, court, file number, date, source URL, Leitsatz, Tenor, Normen, Verweise, and full decision text when available.
+
+**Recommended usage (from repo root, writing into `data/`):**
+```bash
+# Download dump if missing and write Markdown files into data/
+python3 scrapers/export_urteile_markdown_by_year.py \
+  --download \
+  --input scrapers/cases.jsonl \
+  --out data/urteile_markdown_by_year
+```
+
+**Alternative (run inside `scrapers/`):**
+```bash
+python3 export_urteile_markdown_by_year.py --download --out ../data/urteile_markdown_by_year
+```
+
+**Flags:**
+- `--download`: If `--input` is missing, fetches and decompresses the official `.gz` dump
+- `--download-url`: Custom URL to the `cases.jsonl.gz` file (defaults to the OLD dump)
+- `--input`: Path to `cases.jsonl` (default: `./cases.jsonl` relative to CWD)
+- `--out`: Output directory for generated Markdown (default: `urteile_markdown_by_year`)
+- `--cafile`: Path to a CA bundle to verify TLS when downloading
+- `--insecure`: Skip TLS verification for the download (not recommended)
+
+**TLS tips (macOS):**
+- Homebrew OpenSSL CA bundle:
+  - Apple Silicon: `--cafile /opt/homebrew/etc/openssl@3/cert.pem`
+  - Intel: `--cafile /usr/local/etc/openssl@3/cert.pem`
+- Using certifi: `python3 -c "import certifi; print(certifi.where())"` and pass the printed path to `--cafile`
+- Python.org installers: run `open "/Applications/Python 3.11/Install Certificates.command"`
+- As a last resort for one-off runs: `--insecure`
+
+**Troubleshooting:**
+- No space left on device (`OSError: [Errno 28]`): Free disk space or change `--out` to a location with sufficient space (e.g., `--out /Volumes/External/urteile_markdown_by_year`). You can also remove the downloaded archive after decompression (`cases.jsonl.gz`).
+- Permission denied: Ensure you have write permissions to the `--out` directory and `--input` location.
+
 ## Security
 
 - All file access is sandboxed to the configured legal document root
