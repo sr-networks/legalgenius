@@ -108,6 +108,27 @@ make web-dev
 # Open http://localhost:5173 in your browser
 ```
 
+### Alternative: Use package scripts (new)
+
+If you prefer installed entry points over Makefile targets:
+
+```bash
+# 1) Install the package in editable mode to register scripts
+pip install -e .
+
+# 2) Start the API (respects API_HOST, API_PORT, API_RELOAD, API_ALLOW_ORIGINS)
+legalgenius-api
+
+# 3) Run the CLI directly
+legalgenius-cli "Was ist die Kündigungsfrist bei Mietverträgen?"
+
+# 4) Run the MCP server standalone (debugging / integration)
+legalgenius-mcp
+
+# 5) Index documents into Elasticsearch
+legalgenius-index --host localhost --port 9200
+```
+
 ### Detailed Configuration
 
 **Environment Variables:**
@@ -131,6 +152,20 @@ export OPENROUTER_MODEL="anthropic/claude-sonnet-4"  # optional
 export LLM_PROVIDER="ollama"
 export OLLAMA_MODEL="qwen3:4b"  # optional
 ```
+
+Additional API configuration:
+```bash
+# Comma-separated list of allowed origins for CORS (defaults to localhost dev ports)
+export API_ALLOW_ORIGINS="http://localhost:5173,http://127.0.0.1:5173"
+
+# Optional server settings for entry-point runner
+export API_HOST=0.0.0.0
+export API_PORT=8000
+export API_RELOAD=false
+```
+
+Config files:
+- Copy `configs/config.example.yaml` to `configs/config.yaml` to customize defaults like `legal_doc_root`, `glob`, `max_results`, and `context_bytes`.
 
 ### Usage
 
@@ -163,6 +198,12 @@ make web-dev
 **Services running:**
 - Frontend: http://localhost:5173 (React/Vite dev server)
 - Backend API: http://localhost:8000 (FastAPI server)
+
+Alternative (new): start the API via the package script instead of Make:
+```bash
+pip install -e .
+legalgenius-api
+```
 
 The web interface provides:
 - Clean, modern interface for legal questions
@@ -623,6 +664,14 @@ legalgenius/
 - `make api`: Start the FastAPI backend server (port 8000)
 - `make web-install`: Install frontend dependencies
 - `make web-dev`: Start the React development server (port 5173)
+
+### Package Scripts (new)
+
+After `pip install -e .`, these commands are available:
+- `legalgenius-api`: Starts the FastAPI server; uses `API_HOST`, `API_PORT`, `API_RELOAD`, `API_ALLOW_ORIGINS`.
+- `legalgenius-cli`: Runs the agent CLI.
+- `legalgenius-mcp`: Launches the MCP server.
+- `legalgenius-index`: Indexes laws/cases into Elasticsearch.
 - `make test`: Run tests (if available)
 
 ### Development Workflow
@@ -714,12 +763,27 @@ python3 export_urteile_markdown_by_year.py --download --out ../data/urteile_mark
 - No space left on device (`OSError: [Errno 28]`): Free disk space or change `--out` to a location with sufficient space (e.g., `--out /Volumes/External/urteile_markdown_by_year`). You can also remove the downloaded archive after decompression (`cases.jsonl.gz`).
 - Permission denied: Ensure you have write permissions to the `--out` directory and `--input` location.
 
+### Laws Dataset (Bundesgesetze)
+
+You can scrape and export German federal laws and regulations using the official repository:
+
+- Repository: https://github.com/bundestag/gesetze-tools
+
+Follow the repository’s README to run the scraper. Typical outputs include JSON files (e.g., `laws.json`, `bgbl.json`, `banz.json`, `vkbl.json`). To use the results here:
+
+- Preferred: convert laws to Markdown and place them under `data/gesetze/` for consistency with the rest of this project.
+- Alternative: extend `simple_elasticsearch_indexer.py` to index the JSON outputs directly.
+
 ## Security
 
 - All file access is sandboxed to the configured legal document root
 - Path traversal attempts are blocked
 - Only allowed file extensions (`.md`, `.txt`) are accessible
 - No arbitrary code execution in document processing
+
+API hardening tips:
+- Set `API_ALLOW_ORIGINS` to your exact production domains.
+- Keep LLM/API keys in secret managers or environment variables; do not commit `.env`.
 
 ## Legal Notice
 
@@ -745,3 +809,12 @@ Contributions are welcome! Please ensure that:
 ## Support
 
 For technical issues or questions about the codebase, please open an issue in the project repository.
+
+## Next Steps for Production
+
+- Dockerize services: API container with `uvicorn`, Elasticsearch with persistent volume, optional frontend static hosting.
+- CI/CD: lint (ruff), type-check (mypy), run tests, build frontend; pin dependency ranges and enable Dependabot/Renovate.
+- Observability: structured JSON logging, request metrics, health checks, and readiness probes.
+- Security: restrict Elasticsearch host/port to env-configured values only; tighten CORS; add rate limiting and request size/time limits.
+- Tests: unit tests for tools (query building, parsing), FastAPI smoke tests, agent loop with mocked LLM client.
+- Frontend: production build (`web/dist`) served via CDN or behind reverse proxy; configure API base at build time.

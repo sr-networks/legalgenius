@@ -1,0 +1,5 @@
+legal_doc_root: "./data/"
+glob: "**/*.{txt,md}"
+max_results: 50
+context_bytes: 300
+

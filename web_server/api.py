@@ -18,15 +18,21 @@ import re
 
 app = FastAPI(title="LegalGenius API", version="0.1.0")
 
-# CORS for local React dev server (Vite default: 5173)
+def _parse_origins(env_val: Optional[str]) -> list[str]:
+    if not env_val:
+        return []
+    return [o.strip() for o in env_val.split(",") if o.strip()]
+
+# CORS configuration (driven by API_ALLOW_ORIGINS)
+default_origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+allow_origins = _parse_origins(os.environ.get("API_ALLOW_ORIGINS")) or default_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:63142",
-        "https://c21c97d440a8.ngrok-free.app",
-    ],
+    allow_origins=allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -648,3 +654,22 @@ def stream_ask(req: AskRequest):
             "Access-Control-Allow-Headers": "Content-Type",
         }
     )
+
+
+def main() -> None:
+    """Launch the API with uvicorn for production/dev usage.
+
+    Usage after installation:
+      legalgenius-api
+    or
+      python -m web_server.api
+    """
+    import uvicorn
+    host = os.environ.get("API_HOST", "0.0.0.0")
+    port = int(os.environ.get("API_PORT", "8000"))
+    reload = os.environ.get("API_RELOAD", "false").lower() in ("1", "true", "yes")
+    uvicorn.run("web_server.api:app", host=host, port=port, reload=reload)
+
+
+if __name__ == "__main__":
+    main()
