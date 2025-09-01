@@ -1,6 +1,6 @@
 # LegalGenius
 
-A comprehensive German legal research and question-answering system that provides AI-powered search capabilities over German federal laws, regulations, and court decisions. Features Elasticsearch-powered search with German language optimization and real-time reasoning traces. Available as both a modern web interface and command-line tool.
+A comprehensive German legal research and question-answering system that provides LLM-powered search capabilities over German federal laws, regulations, and court decisions. Features Elasticsearch-powered search with agentic control and real-time reasoning traces. Available as a modern web interface, command-line chat and batch script for benchmarking.
 
 ## Overview
 
@@ -818,3 +818,4 @@ For technical issues or questions about the codebase, please open an issue in th
 - Security: restrict Elasticsearch host/port to env-configured values only; tighten CORS; add rate limiting and request size/time limits.
 - Tests: unit tests for tools (query building, parsing), FastAPI smoke tests, agent loop with mocked LLM client.
 - Frontend: production build (`web/dist`) served via CDN or behind reverse proxy; configure API base at build time.
+- Multi-turn chat function.
