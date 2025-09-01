@@ -2,6 +2,8 @@
 
 A comprehensive German legal research and question-answering system that provides LLM-powered search capabilities over German federal laws, regulations, and court decisions. Features Elasticsearch-powered search with agentic control and real-time reasoning traces. Available as a modern web interface, command-line chat and batch script for benchmarking.
 
+<img width="1320" height="796" alt="image" src="https://github.com/user-attachments/assets/90d1499b-a0f9-45d1-9b22-9a1996e40f3e" />
+
 ## Overview
 
 LegalGenius combines a comprehensive corpus of German legal documents with an intelligent search agent to help users find relevant legal information. The system uses a Model Context Protocol (MCP) server architecture with Elasticsearch-powered search capabilities optimized for German legal text processing and natural language understanding.
