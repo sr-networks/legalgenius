@@ -814,6 +814,28 @@ The software is provided as-is. German federal laws and regulations are official
 - **Court Decisions**: Various German court databases and archives
 - **Format**: All documents converted to Markdown for optimal readability and searchability
 
+## Benchmarking
+
+First results with:
+
+- Open-source LLM (cost-efficient, no proprietary lock-in, runs on EU cloud)
+- 300 norms and 200k cases
+
+Methodology:
+- 10 tough, recent questions (German law; post-update topics)
+- Gold solutions by a domain expert
+- Evaluation: GPT-5 serves as a blind judge with a rubric
+- Reference: r/LocalLLaMA — Agentic Legal Research for German Law — First Benchmark
+
+Result:
+- Even without any optimization, the agent reached GPT-5 level
+
+Why this matters:
+- SOTA accuracy at fractional cost with an auditable, tool-using agent; promising for compliant, on-prem legal assistants.
+
+Next:
+- Targeted domain adaptation and customer GPUs to run in small to midsized offices
+
 ## Populate Laws (First-Time)
 
 The repository includes a working copy of the official scraping tools in `scrapers/gesetze-tools` to download and convert German federal laws to Markdown under `data/gesetze/`.
