@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Test CLI script for the two-phase search_rg tool.
-Tests file filtering and keyword segment search.
+Test CLI script for Elasticsearch-backed search.
+Runs full-text queries across laws (gesetze) and court decisions (urteile).
 """
 
 import argparse
@@ -13,26 +13,26 @@ from pathlib import Path
 # Add the mcp_server directory to the path
 sys.path.insert(0, str(Path(__file__).parent / "mcp_server"))
 
-from tools import search_rg
+from tools import elasticsearch_search
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Test the two-phase search_rg tool",
+        description="Test the Elasticsearch search tool",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Single keyword search
-  python test_search.py "Testament" --files urteile_markdown_by_year/
-  
-  # Two-phase multi-keyword search
-  python test_search.py "Testament Geschäftsgebühr" --files urteile_markdown_by_year/
-  
-  # Test file filtering limits
-  python test_search.py "der" --files urteile_markdown_by_year/ --max-files 10
-  
-  # Search in specific directories
-  python test_search.py "gemeinschaftlich Testament" --files gesetze/ urteile_markdown_by_year/
+  # Single term
+  python test_search.py "Testament"
+
+  # Phrase
+  python test_search.py "fristlose Kündigung"
+
+  # Limit to document type
+  python test_search.py "BGB § 573" --document-type gesetze
+
+  # Multiple terms
+  python test_search.py "Mietrecht Kündigung" --max-results 5
         """
     )
     
@@ -40,77 +40,32 @@ Examples:
         "query", 
         help="Search query (space-separated keywords for two-phase search)"
     )
-    parser.add_argument(
-        "--files", 
-        nargs="+", 
-        default=["./"],
-        help="File patterns to search (default: entire corpus)"
-    )
-    parser.add_argument(
-        "--max-results", 
-        type=int, 
-        default=10,
-        help="Maximum number of results (default: 10)"
-    )
-    parser.add_argument(
-        "--context", 
-        type=int, 
-        default=10,
-        help="Number of context lines (default: 10)"
-    )
-    parser.add_argument(
-        "--passage-lines", 
-        type=int, 
-        default=10,
-        help="Number of lines to search for all terms within (default: 10)"
-    )
-    parser.add_argument(
-        "--case-sensitive", 
-        action="store_true",
-        help="Case-sensitive search"
-    )
+    parser.add_argument("--document-type", choices=["all", "gesetze", "urteile"], default="all", help="Type of documents to search")
+    parser.add_argument("--max-results", type=int, default=10, help="Maximum number of results (default: 10)")
+    parser.add_argument("--context-lines", type=int, default=2, help="Number of context lines per match (default: 2)")
+    parser.add_argument("--host", default="localhost", help="Elasticsearch host (default: localhost)")
+    parser.add_argument("--port", type=int, default=9200, help="Elasticsearch port (default: 9200)")
     parser.add_argument(
         "--json", 
         action="store_true",
         help="Output raw JSON results"
     )
-    parser.add_argument(
-        "--verbose", 
-        action="store_true",
-        help="Show detailed phase information"
-    )
     
     args = parser.parse_args()
     
-    # Parse keywords for phase info
-    is_or_query = " OR " in args.query.upper()
-    if is_or_query:
-        keywords = [part.strip() for part in re.split(r'\s+OR\s+', args.query, flags=re.IGNORECASE)]
-        keywords = [kw for kw in keywords if kw and kw.upper() != "OR"]
-    else:
-        keywords = args.query.split()
-    
-    print(f"🔍 Query: '{args.query}'")
-    print(f"📁 Files: {args.files}")
-    print(f"📊 Max results: {args.max_results}, Context: {args.context}")
-    
-    if args.verbose:
-        if len(keywords) > 1:
-            print(f"🔄 rg/awk pipeline search:")
-            print(f"   rg: Find chunks with OR of keywords: {keywords}")
-            print(f"   awk: Filter chunks with all keywords (AND logic)")
-        else:
-            print(f"🔄 rg/awk pipeline search: single keyword")
+    print(f"🔍 Query: '{args.query}' | Type: {args.document_type} | Max: {args.max_results}")
+    print(f"🔌 ES: http://{args.host}:{args.port} | Context lines: {args.context_lines}")
     
     print("=" * 70)
     
     try:
-        results = search_rg(
+        results = elasticsearch_search(
             query=args.query,
-            file_list=args.files,
+            document_type=args.document_type,
             max_results=args.max_results,
-            context_lines=args.context,
-            case_sensitive=args.case_sensitive
+            context_lines=args.context_lines,
+            es_host=args.host,
+            es_port=args.port,
         )
         
         if args.json:
@@ -124,42 +79,27 @@ Examples:
             return
         
         matches = results.get("matches", [])
-        print(f"📋 Found {len(matches)} matches")
-        
-        if args.verbose and matches:
-            # Show file distribution
-            files = set(match.get("file", "") for match in matches)
-            print(f"📂 Across {len(files)} files")
-            for file in sorted(files):
-                count = sum(1 for m in matches if m.get("file") == file)
-                print(f"   • {file}: {count} match{'es' if count != 1 else ''}")
-        
+        print(f"📋 Found {len(matches)} results (total_hits={results.get('total_hits')})")
         print()
-        
         for i, match in enumerate(matches, 1):
-            file_path = match.get("file", "")
-            line_num = match.get("line", 0)
-            text = match.get("text", "")
-            section = match.get("section", "")
-            context = match.get("context", [])
-            byte_range = match.get("byte_range", [0, 0])
-            
-            print(f"🎯 Match {i}: {file_path}:{line_num}")
-            if section:
-                print(f"📖 Section: {section}")
-            if args.verbose:
-                print(f"📍 Byte range: {byte_range[0]}-{byte_range[1]}")
-            
-            print("📄 Context:")
-            for ctx_line in context:
-                line_no = ctx_line.get("line", 0)
-                line_text = ctx_line.get("text", "")
-                marker = ">>>" if line_no == line_num else "   "
-                
-                # No truncation - show full lines
-                
-                print(f"  {marker} {line_no:5d}: {line_text}")
-            
+            title = match.get("title", "Untitled")
+            doc_type = match.get("document_type", "?")
+            file_path = match.get("file_path", "")
+            score = match.get("score", 0.0)
+            preview = match.get("content_preview", "")
+            print(f"#{i} [{doc_type}] {title} (score={score:.3f})")
+            print(f"   ↳ {file_path}")
+            if preview:
+                print(f"   ✎ {preview}")
+            # Show up to one context block with matching lines
+            for lm in match.get("line_matches", [])[:1]:
+                ctx = lm.get("context", [])
+                print("   Context:")
+                for row in ctx:
+                    ln = row.get("line_number")
+                    marker = ">>>" if row.get("is_match") else "   "
+                    text = row.get("text", "")
+                    print(f"   {marker} {ln:5d}: {text}")
             print("-" * 70)
             
     except Exception as e:

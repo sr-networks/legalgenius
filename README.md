@@ -44,7 +44,7 @@ LegalGenius combines a comprehensive corpus of German legal documents with an in
 
 ### Streamlined Search Tools
 - **Primary Tool**: `elasticsearch_search` now handles most search operations
-- **Deprecated Tool**: Removed `search_rg` in favor of more powerful Elasticsearch capabilities
+- **Deprecated Tool**: `search_rg` retained as an optional fallback for precise file-local searches (requires ripgrep)
 - **Enhanced Results**: Better structured results with metadata, relevance scores, and line matches
 
 ## Quick Start
@@ -54,8 +54,10 @@ LegalGenius combines a comprehensive corpus of German legal documents with an in
 - Python 3.8+
 - Node.js 18+ (for web interface)
 - Docker Desktop (for Elasticsearch search engine)
-- ripgrep (`rg`) installed and available in PATH
 - An API key for your chosen LLM provider
+
+Optional tools:
+- ripgrep (`rg`) only if you choose to use the deprecated `search_rg` fallback
 
 ### Quick Start Guide
 
@@ -128,6 +130,8 @@ legalgenius-mcp
 # 5) Index documents into Elasticsearch
 legalgenius-index --host localhost --port 9200
 ```
+
+Note: If `data/gesetze/` is empty on first run, populate it using the bundled scrapers described in “Populate Laws (First-Time)” below before indexing.
 
 ### Detailed Configuration
 
@@ -292,7 +296,7 @@ make server
 - **`read_file_range`**: Extract text snippets with configurable context around search results
 - **`list_paths`**: Browse available documents and directories
 
-Note: The ripgrep-based `search_rg` tool has been removed in favor of the more powerful Elasticsearch integration for improved performance and German language optimization.
+Note: The ripgrep-based `search_rg` tool is deprecated in favor of the more powerful Elasticsearch integration, but remains available as an optional fallback for precise file-local searches. It requires ripgrep (`rg`) if you choose to use it.
 
 ### API Endpoints
 
@@ -341,7 +345,13 @@ docker run -d --name elasticsearch-simple \
   -e "discovery.type=single-node" \
   -e "xpack.security.enabled=false" \
   -e "ES_JAVA_OPTS=-Xms512m -Xmx512m" \
-  elasticsearch:8.11.0
+elasticsearch:8.11.0
+```
+
+Makefile shortcut:
+```bash
+make es-up   # starts or creates the container
+make es-wait # waits until it responds on localhost:9200
 ```
 
 **Verifying Elasticsearch is running:**
@@ -664,6 +674,16 @@ legalgenius/
 - `make api`: Start the FastAPI backend server (port 8000)
 - `make web-install`: Install frontend dependencies
 - `make web-dev`: Start the React development server (port 5173)
+- `make gesetze-install`: Install scraper dependencies for laws
+- `make gesetze-update-list`: Refresh law slug list from gesetze-im-internet.de
+- `make gesetze-download`: Download all laws (XML) into `scrapers/gesetze-tools/laws/`
+- `make gesetze-convert`: Convert downloaded XML to Markdown under `data/gesetze/`
+- `make gesetze-all`: Run update-list, download, and convert in sequence
+- `make index-gesetze`: Index `data/gesetze/` into Elasticsearch only
+- `make es-up`: Start (or create) the local Elasticsearch container
+- `make es-wait`: Wait until Elasticsearch responds on `localhost:9200`
+- `make bootstrap-laws`: One-shot: scrape + convert laws, start ES, wait, then index
+- `make urteile-neuris`: Fetch court decisions from Neuris API into `data/urteile_markdown_by_year/`
 
 ### Package Scripts (new)
 
@@ -765,14 +785,7 @@ python3 export_urteile_markdown_by_year.py --download --out ../data/urteile_mark
 
 ### Laws Dataset (Bundesgesetze)
 
-You can scrape and export German federal laws and regulations using the official repository:
-
-- Repository: https://github.com/bundestag/gesetze-tools
-
-Follow the repository’s README to run the scraper. Typical outputs include JSON files (e.g., `laws.json`, `bgbl.json`, `banz.json`, `vkbl.json`). To use the results here:
-
-- Preferred: convert laws to Markdown and place them under `data/gesetze/` for consistency with the rest of this project.
-- Alternative: extend `simple_elasticsearch_indexer.py` to index the JSON outputs directly.
+Bundled scrapers for German federal laws are located at `scrapers/gesetze-tools` (forked from the official BundesGit tools). Use them to download XML from gesetze-im-internet.de and convert to Markdown under `data/gesetze/`. See the section “Populate Laws (First-Time)” below for exact commands. Upstream reference: https://github.com/bundestag/gesetze-tools
 
 ## Security
 
@@ -798,6 +811,92 @@ The software is provided as-is. German federal laws and regulations are official
 - **Laws and Regulations**: Sourced from [gesetze-im-internet.de](http://www.gesetze-im-internet.de/)
 - **Court Decisions**: Various German court databases and archives
 - **Format**: All documents converted to Markdown for optimal readability and searchability
+
+## Populate Laws (First-Time)
+
+The repository includes a working copy of the official scraping tools in `scrapers/gesetze-tools` to download and convert German federal laws to Markdown under `data/gesetze/`.
+
+### One-time setup
+
+- Create a Python virtual environment (optional but recommended):
+  - `python3 -m venv .venv && source .venv/bin/activate`
+- Install scraper requirements:
+  - `cd scrapers/gesetze-tools && pip install -r requirements.txt`
+
+### Download laws (XML)
+
+- Refresh the law list (optional):
+  - `python lawde.py updatelist`
+- Download all laws (takes hours, requires stable network):
+  - `python lawde.py loadall --path laws`
+
+Tips:
+- To download only specific laws (faster), use slugs: `python lawde.py load bgb stgb vwvfg --path laws`
+- You can interrupt and rerun; the script replaces per-law directories.
+
+### Convert to Markdown and place into `data/gesetze/`
+
+- From `scrapers/gesetze-tools`:
+  - `python lawdown.py convert laws ../../data/gesetze`
+
+Results:
+- Markdown files are written to `data/gesetze/<first-letter>/<slug>/index.md` with supporting assets copied alongside.
+
+### Index into Elasticsearch
+
+- From the repo root, index the content:
+  - `python simple_elasticsearch_indexer.py --gesetze-only`
+
+Troubleshooting:
+- If indexing or search shows zero laws, verify that Markdown files exist under `data/gesetze/` and re-run the indexer.
+- If downloads fail, rerun `lawde.py` (it retries and replaces incomplete directories).
+- Required tools for scraping: `docopt`, `requests`, `lxml`, etc. are installed by the `requirements.txt` in `scrapers/gesetze-tools`.
+
+Alternative (Makefile):
+- End-to-end flow: `make gesetze-all`
+- Or step-by-step:
+  - `make gesetze-update-list`
+  - `make gesetze-download`
+  - `make gesetze-convert`
+  - `make index-gesetze`
+
+## Populate Court Decisions (Neuris)
+
+Fetch court decisions from the official Neuris API and write Markdown grouped by year under `data/urteile_markdown_by_year/`.
+
+Manual usage:
+```bash
+# Default: 2000..current year
+python3 scrapers/fetch_urteile_neuris.py --from-year 2000 --out data/urteile_markdown_by_year
+
+# To target the public testphase endpoint explicitly:
+python3 scrapers/fetch_urteile_neuris.py \
+  --base-url https://testphase.rechtsinformationen.bund.de \
+  --search-path /v1/case-law \
+  --detail-path /v1/case-law/{id} \
+  --from-year 2010 --to-year 2024 \
+  --from-param decisionDateFrom --to-param decisionDateTo \
+  --out data/urteile_markdown_by_year
+```
+
+Makefile shortcut:
+```bash
+# Defaults: from 2000 to current year
+make urteile-neuris
+
+# Override range or base
+make urteile-neuris urteils-years=1990 urteils-years-to=2024 \
+  urteils-base=https://testphase.rechtsinformationen.bund.de \
+  urteils-search=/v1/case-law \
+  urteils-detail=/v1/case-law/{id}
+```
+
+Notes:
+- The script de-duplicates entries by source URL or id and merges new decisions into existing yearly files.
+- If the API requires credentials, pass `--api-key` to the script; it will use `Authorization: Bearer <key>`.
+- Refer to the official guides: https://docs.rechtsinformationen.bund.de/guides/ for endpoint details.
+ - If you see a DNS error for the host, double‑check the base URL. For the test environment use `https://testphase.rechtsinformationen.bund.de`.
+ - Some deployments use different date parameter names. For the testphase case-law endpoint, pass `--from-param decisionDateFrom --to-param decisionDateTo`. If you still see 0 results, try adding a query with `--query '*'` or other API-specific filters via `--extra key=value`.
 
 ## Contributing
 

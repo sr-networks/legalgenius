@@ -13,21 +13,23 @@ def _print_json(data: Dict[str, Any]) -> None:
 
 
 def cmd_search(args: argparse.Namespace) -> None:
-    result = tools.search_rg(
+    result = tools.elasticsearch_search(
         query=args.query or "",
-        glob=args.glob,
+        document_type=args.document_type,
         max_results=args.max_results,
-        context_bytes=args.context_bytes,
         context_lines=args.context_lines,
+        es_host=args.es_host,
+        es_port=args.es_port,
     )
     wrapped = {
-        "tool": "search_rg",
+        "tool": "elasticsearch_search",
         "args": {
             "query": args.query,
-            "glob": args.glob,
+            "document_type": args.document_type,
             "max_results": args.max_results,
-            "context_bytes": args.context_bytes,
             "context_lines": args.context_lines,
+            "es_host": args.es_host,
+            "es_port": args.es_port,
         },
         "result": result,
     }
@@ -85,12 +87,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_search = sub.add_parser("search", help="Search files for a query (ripgrep required)")
-    p_search.add_argument("--query", required=True, help="Search pattern (string). Supports boolean AND/OR with parentheses, line-scoped.")
-    p_search.add_argument("--glob", default=None, help="Glob to limit files, e.g. '**/*.{md,txt}'")
-    p_search.add_argument("--max-results", type=int, default=None, help="Max number of matches to return")
-    p_search.add_argument("--context-bytes", type=int, default=None, help="Bytes of preview context to include around the match")
-    p_search.add_argument("--context-lines", type=int, default=None, help="Lines of preview context to include around the match (used if --context-bytes not set)")
+    p_search = sub.add_parser("search", help="Elasticsearch full-text search across legal corpus")
+    p_search.add_argument("--query", required=True, help="Search terms or phrases (e.g., 'Kündigungsfrist', 'BGB § 573')")
+    p_search.add_argument("--document-type", choices=["all", "gesetze", "urteile"], default="all", help="Limit search to document type")
+    p_search.add_argument("--max-results", type=int, default=10, help="Max number of results to return (default 10)")
+    p_search.add_argument("--context-lines", type=int, default=2, help="Lines of context to include around matches (default 2)")
+    p_search.add_argument("--es-host", default="localhost", help="Elasticsearch host (default localhost)")
+    p_search.add_argument("--es-port", type=int, default=9200, help="Elasticsearch port (default 9200)")
     p_search.set_defaults(func=cmd_search)
 
     p_read = sub.add_parser("read", help="Read a byte range from a file with optional context")
@@ -123,5 +126,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
 
