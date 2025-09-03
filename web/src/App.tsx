@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import ReasoningTraceBox from "./components/ReasoningTraceBox";
@@ -14,6 +14,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [steps, setSteps] = useState<any[]>([]);
   const controllerRef = useRef<AbortController | null>(null);
+  const logRef = useRef<HTMLDivElement | null>(null);
   
   // Token tracking state
   const [totalTokensSent, setTotalTokensSent] = useState(0);
@@ -379,8 +380,8 @@ export default function App() {
           </div>
         </div>
 
-        {/* Loading State with Integrated Reasoning Traces */}
-        {loading && (
+        {/* Research Log Pane (persists; scrollable; shows entire history) */}
+        {(loading || steps.length > 0) && (
           <div style={{
             background: "rgba(255, 255, 255, 0.95)",
             backdropFilter: "blur(20px)",
@@ -394,41 +395,60 @@ export default function App() {
               display: "flex",
               alignItems: "center",
               gap: "1.5rem",
-              marginBottom: steps.length > 0 ? "2rem" : "0"
+              marginBottom: steps.length > 0 ? "1rem" : "0"
             }}>
-              <div style={{
-                width: "48px",
-                height: "48px",
-                border: "4px solid #e2e8f0",
-                borderTop: "4px solid #667eea",
-                borderRadius: "50%",
-                animation: "spin 1s linear infinite"
-              }} />
+              {loading ? (
+                <div style={{
+                  width: "48px",
+                  height: "48px",
+                  border: "4px solid #e2e8f0",
+                  borderTop: "4px solid #667eea",
+                  borderRadius: "50%",
+                  animation: "spin 1s linear infinite"
+                }} />
+              ) : (
+                <div style={{
+                  width: "48px",
+                  height: "48px",
+                  borderRadius: "50%",
+                  background: "#eef2ff",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "#667eea",
+                  fontWeight: 700
+                }}>✓</div>
+              )}
               <div>
                 <h3 style={{
                   margin: "0 0 0.5rem 0",
                   fontSize: "1.25rem",
                   fontWeight: 600,
                   color: "#1e293b"
-                }}>Durchsuche Rechtsquellen...</h3>
-                <p style={{
-                  margin: 0,
-                  color: "#64748b",
-                  fontSize: "0.95rem"
-                }}>Dies kann einige Momente dauern</p>
+                }}>{loading ? "Durchsuche Rechtsquellen..." : "Recherchelauf (Protokoll)"}</h3>
+                {loading ? (
+                  <p style={{ margin: 0, color: "#64748b", fontSize: "0.95rem" }}>Dies kann einige Momente dauern</p>
+                ) : (
+                  <p style={{ margin: 0, color: "#64748b", fontSize: "0.95rem" }}>Abgeschlossen – Protokoll der Schritte und Tool-Aufrufe</p>
+                )}
               </div>
             </div>
-            
-            {/* Current Step Reasoning Traces */}
+
+            {/* Entire step history – scrollable */}
             {steps.length > 0 && (
-              <div style={{
-                borderTop: "1px solid #e2e8f0",
-                paddingTop: "1.5rem"
-              }}>
-                <ReasoningTraceBox 
-                  steps={steps.slice(-3)} // Show only last 3 steps to avoid clutter
+              <div
+                ref={logRef}
+                style={{
+                  borderTop: "1px solid #e2e8f0",
+                  paddingTop: "1rem",
+                  maxHeight: "320px",
+                  overflowY: "auto"
+                }}
+              >
+                <ReasoningTraceBox
+                  steps={steps} // Show all steps
                   isLoading={loading}
-                  compact={true} // Add compact mode prop
+                  compact={true}
                 />
               </div>
             )}
@@ -644,7 +664,17 @@ export default function App() {
         @keyframes spin {
           0% { transform: rotate(0deg); }
           100% { transform: rotate(360deg); }
-        }
+  }
+
+  // Auto-scroll the log to bottom on new events (unless user scrolled up)
+  useEffect(() => {
+    const el = logRef.current;
+    if (!el) return;
+    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    if (isNearBottom) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [steps]);
       `}</style>
     </div>
   );

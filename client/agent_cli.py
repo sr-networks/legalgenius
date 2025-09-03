@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 from openai import OpenAI
 
 import yaml
+from client.session_log import SessionLogger
 
 CONFIG_PATH = Path("configs/config.yaml")
 
@@ -28,7 +29,7 @@ def load_config() -> dict:
 
 
 class MCPClient:
-    def __init__(self, server_cmd: Optional[List[str]] = None, cwd: Optional[Path] = None, env: Optional[dict] = None):
+    def __init__(self, server_cmd: Optional[List[str]] = None, cwd: Optional[Path] = None, env: Optional[dict] = None, logger: Optional[SessionLogger] = None):
         if server_cmd is None:
             server_cmd = [sys.executable, "-u", "mcp_server/server.py"]
         self.proc = subprocess.Popen(
@@ -43,6 +44,7 @@ class MCPClient:
             bufsize=1,
         )
         self._id = 0
+        self.logger = logger
 
     def call_tool(self, tool: str, args: Dict[str, Any]) -> Dict[str, Any]:
         self._id += 1
@@ -57,6 +59,12 @@ class MCPClient:
         if "error" in resp:
             raise RuntimeError(resp["error"].get("message", "Unknown error"))
         result = resp.get("result", {})
+        # Persist raw tool call log
+        if self.logger is not None:
+            try:
+                self.logger.log_tool(tool, args, result or {})
+            except Exception:
+                pass
         # Human-readable log lines
         def _fmt() -> str:
             if tool == "read_file_range":
@@ -612,9 +620,22 @@ def main():
     env["PYTHONPATH"] = env.get("PYTHONPATH") or str(Path.cwd())
     env.setdefault("LEGAL_DOC_ROOT", cfg.get("legal_doc_root", "./data/"))
 
-    mcp = MCPClient(server_cmd=server_cmd, env=env)
+    # Initialize session logger
+    session_logger: Optional[SessionLogger] = None
+    try:
+        session_logger = SessionLogger()
+        print(f"[log] Session log: {session_logger.path}")
+    except Exception as e:
+        print(f"[log] Could not initialize session log: {e}")
+
+    mcp = MCPClient(server_cmd=server_cmd, env=env, logger=session_logger)
     try:
         client = OpenAI(base_url=resolved_base_url, api_key=resolved_api_key)
+        if session_logger is not None:
+            try:
+                session_logger.log_message("user", args.query)
+            except Exception:
+                pass
         answer = run_agent(
             args.query,
             mcp,
@@ -627,8 +648,18 @@ def main():
             tools_mode="auto",
         )
         print(answer)
+        if session_logger is not None:
+            try:
+                session_logger.log_message("assistant", answer)
+            except Exception:
+                pass
     finally:
         mcp.close()
+        if session_logger is not None:
+            try:
+                session_logger.close()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

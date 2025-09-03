@@ -244,9 +244,10 @@ class SimpleLegalDocumentIndexer:
             if bgf_docs:
                 documents.extend(bgf_docs)
             else:
-                # Single document fallback
+                # Single document fallback (for per-decision Markdown files)
+                title_fallback = self.extract_title_from_content(main_content) or file_path.stem
                 doc = {
-                    "title": f"Entscheidungen {year}",
+                    "title": title_fallback,
                     "content": main_content,
                     "document_type": "urteil",
                     "file_path": str(file_path),
@@ -522,25 +523,25 @@ class SimpleLegalDocumentIndexer:
         
         print(f"Processing Urteile from {urteile_dir}...")
         
-        # Process each year file
-        for file_path in urteile_dir.glob("*.md"):
-            if file_path.name == "index.md":
-                continue
-                
-            try:
-                documents = self.process_urteil_document(file_path)
-                processed_files += 1
-                
-                # Index documents in small batches to avoid large requests
-                batch_size = 50  # Much smaller batch size for large files
-                for i in range(0, len(documents), batch_size):
-                    batch = documents[i:i+batch_size]
-                    self.bulk_index_documents(batch, index_name)
-                
-                print(f"Processed {file_path.name} - extracted {len(documents)} cases")
-                
-            except Exception as e:
-                print(f"Error processing {file_path}: {e}")
+        # Recursively process year folders and per-decision files
+        for root, dirs, files in os.walk(urteile_dir):
+            for fn in files:
+                if not fn.endswith('.md'):
+                    continue
+                if fn == 'index.md':
+                    continue
+                file_path = Path(root) / fn
+                try:
+                    documents = self.process_urteil_document(file_path)
+                    processed_files += 1
+                    # Index documents in small batches to avoid large requests
+                    batch_size = 50
+                    for i in range(0, len(documents), batch_size):
+                        batch = documents[i:i+batch_size]
+                        self.bulk_index_documents(batch, index_name)
+                    print(f"Processed {file_path} - extracted {len(documents)} cases")
+                except Exception as e:
+                    print(f"Error processing {file_path}: {e}")
         
         # Index remaining documents
         if all_documents:

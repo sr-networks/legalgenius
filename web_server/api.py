@@ -2,6 +2,7 @@ import os
 import json
 import time
 from pathlib import Path
+from uuid import uuid4
 from typing import Optional, Dict, Any, Generator, List
 
 from fastapi import FastAPI, HTTPException
@@ -54,6 +55,7 @@ RESOLVED_SITE_TITLE: Optional[str] = None
 
 # ---- JSONL logging (./logs/api) ----
 LOG_DIR = Path("./logs/api")
+SESSIONS_DIR = Path("./logs/sessions")
 
 def _log_interaction(event: Dict[str, Any]) -> None:
     """Append a single JSON event to a daily-rotated JSONL file in ./logs/api.
@@ -66,6 +68,27 @@ def _log_interaction(event: Dict[str, Any]) -> None:
             f.write(json.dumps(event, ensure_ascii=False) + "\n")
     except Exception:
         # Do not raise logging errors
+        pass
+
+
+def _session_start() -> str:
+    """Create a new session id and ensure directory exists"""
+    try:
+        SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    return uuid4().hex
+
+
+def _session_log(session_id: str, event: Dict[str, Any]) -> None:
+    """Append a JSONL event to the per-session log file"""
+    try:
+        SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+        fpath = SESSIONS_DIR / f"{session_id}.jsonl"
+        event = {"ts": time.time(), "session_id": session_id, **event}
+        with fpath.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(event, ensure_ascii=False) + "\n")
+    except Exception:
         pass
 
 
@@ -430,6 +453,7 @@ def stream_agent_response(
     query: str,
     provider: str,
     model: str,
+    session_id: str,
     api_key: Optional[str] = None,
     base_url: Optional[str] = None
 ) -> Generator[str, None, None]:
@@ -450,8 +474,12 @@ def stream_agent_response(
         total_tokens_received = 0
         final_answer_logged: Optional[str] = None
         
-        # Send initial status
-        yield f"data: {json.dumps({'type': 'thinking', 'message': 'Analysiere die Frage und plane die Suche...', 'timestamp': time.time()})}\n\n"
+        # Announce session and initial status
+        yield f"data: {json.dumps({'type': 'session', 'session_id': session_id, 'timestamp': time.time()})}\n\n"
+        _session_log(session_id, {"type": "session", "query": query, "provider": provider, "model": resolved_model})
+        thinking_evt = {'type': 'thinking', 'message': 'Analysiere die Frage und plane die Suche...'}
+        yield f"data: {json.dumps({**thinking_evt, 'timestamp': time.time()})}\n\n"
+        _session_log(session_id, thinking_evt)
         
         # Set up tools and messages
         tools = _build_tools_spec()
@@ -474,7 +502,9 @@ def stream_agent_response(
         
         while steps < max_steps:
             print("\nSTEP", steps)
-            yield f"data: {json.dumps({'type': 'step', 'message': f'Schritt {steps + 1}: Verarbeite Anfrage...', 'timestamp': time.time()})}\n\n"
+            step_evt = {'type': 'step', 'message': f'Schritt {steps + 1}: Verarbeite Anfrage...'}
+            yield f"data: {json.dumps({**step_evt, 'timestamp': time.time()})}\n\n"
+            _session_log(session_id, step_evt)
             
             used_any_tool = any(m.get("role") == "tool" for m in messages)
 #            tool_choice_val = "auto" if used_any_tool else "required" if provider != "ollama" else "auto"
@@ -575,14 +605,18 @@ def stream_agent_response(
                         try:
                             result_text = fn(**args)
                             
-                            # Stream tool events
+                            # Stream and persist tool events
                             events = mcp.get_and_clear_events()
                             for event in events:
-                                yield f"data: {json.dumps({'type': 'tool_event', 'event': event, 'timestamp': time.time()})}\n\n"
+                                tool_evt = {'type': 'tool_event', 'event': event}
+                                yield f"data: {json.dumps({**tool_evt, 'timestamp': time.time()})}\n\n"
+                                _session_log(session_id, tool_evt)
                                 
                         except Exception as e:
                             result_text = json.dumps({"error": str(e)}, ensure_ascii=False)
-                            yield f"data: {json.dumps({'type': 'tool_event', 'event': {'type': 'tool_error', 'tool': name, 'error': str(e)}, 'timestamp': time.time()})}\n\n"
+                            tool_err = {'type': 'tool_event', 'event': {'type': 'tool_error', 'tool': name, 'error': str(e)}}
+                            yield f"data: {json.dumps({**tool_err, 'timestamp': time.time()})}\n\n"
+                            _session_log(session_id, tool_err)
                             
                     messages.append({
                         "role": "tool",
@@ -593,7 +627,9 @@ def stream_agent_response(
                 
             # Final response
             final_answer = msg.content or ""
-            yield f"data: {json.dumps({'type': 'final_answer', 'message': final_answer, 'timestamp': time.time()})}\n\n"
+            final_evt = {'type': 'final_answer', 'message': final_answer}
+            yield f"data: {json.dumps({**final_evt, 'timestamp': time.time()})}\n\n"
+            _session_log(session_id, final_evt)
             # Log the interaction upon final answer
             end_ts = time.time()
             try:
@@ -620,25 +656,33 @@ def stream_agent_response(
             break
             
         if steps >= max_steps:
-            yield f"data: {json.dumps({'type': 'error', 'message': 'Maximale Anzahl Schritte erreicht', 'timestamp': time.time()})}\n\n"
+            err_evt = {'type': 'error', 'message': 'Maximale Anzahl Schritte erreicht'}
+            yield f"data: {json.dumps({**err_evt, 'timestamp': time.time()})}\n\n"
+            _session_log(session_id, err_evt)
             
     except Exception as e:
-        yield f"data: {json.dumps({'type': 'error', 'message': f'Systemfehler: {str(e)}', 'timestamp': time.time()})}\n\n"
+        err_evt = {'type': 'error', 'message': f'Systemfehler: {str(e)}'}
+        yield f"data: {json.dumps({**err_evt, 'timestamp': time.time()})}\n\n"
+        _session_log(session_id, err_evt)
     finally:
         mcp.close()
         
-    yield f"data: {json.dumps({'type': 'complete', 'timestamp': time.time()})}\n\n"
+    complete_evt = {'type': 'complete'}
+    yield f"data: {json.dumps({**complete_evt, 'timestamp': time.time()})}\n\n"
+    _session_log(session_id, complete_evt)
 
 
 @app.post("/stream")
 def stream_ask(req: AskRequest):
     """Streaming endpoint for real-time agent responses"""
+    session_id = _session_start()
     def event_publisher():
         try:
             for event in stream_agent_response(
                 query=req.query,
                 provider=req.provider or RESOLVED_PROVIDER,
-                model=req.model or RESOLVED_MODEL
+                model=req.model or RESOLVED_MODEL,
+                session_id=session_id,
             ):
                 yield event
         except Exception as e:
@@ -654,6 +698,30 @@ def stream_ask(req: AskRequest):
             "Access-Control-Allow-Headers": "Content-Type",
         }
     )
+
+
+@app.get("/sessions/{session_id}")
+def get_session(session_id: str) -> Dict[str, Any]:
+    """Return all events recorded for a given session (for permanent log pane)."""
+    try:
+        fpath = SESSIONS_DIR / f"{session_id}.jsonl"
+        if not fpath.exists():
+            raise HTTPException(status_code=404, detail="Session not found")
+        events: List[Dict[str, Any]] = []
+        with fpath.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    events.append(json.loads(line))
+                except Exception:
+                    continue
+        return {"session_id": session_id, "events": events}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 def main() -> None:
