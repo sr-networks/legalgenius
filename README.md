@@ -22,6 +22,31 @@ LegalGenius combines a comprehensive corpus of German legal documents with an in
 - **Real-time Streaming**: Live updates showing tool usage and reasoning steps
 - **Reasoning Traces**: View LLM internal reasoning process in real-time via web interface
 
+## Benchmarking
+
+First results with:
+
+- Open-source LLM (cost-efficient, no proprietary lock-in, runs on EU cloud)
+- 300 norms and 200k cases
+
+Methodology:
+- 10 tough, recent questions (German law; post-update topics)
+- Gold solutions by a domain expert
+- Evaluation: GPT-5 serves as a blind judge with a rubric
+- Reference: r/LocalLLaMA — Agentic Legal Research for German Law — First Benchmark
+
+Result:
+- Even without any optimization, the agent reached GPT-5 level
+
+Why this matters:
+- SOTA accuracy at fractional cost with an auditable, tool-using agent; promising for compliant, on-prem legal assistants.
+
+Next:
+- Targeted domain adaptation and customer GPUs to run in small to midsized offices
+
+![agentic-legal-research-for-german-law-first-benchmark-v0-btdmsvjhwclf1 jpg](https://github.com/user-attachments/assets/07a46623-9b0c-472a-862e-07854e6bb106)
+
+
 ## Recent Improvements
 
 ### Elasticsearch Integration (Latest)
@@ -814,28 +839,6 @@ The software is provided as-is. German federal laws and regulations are official
 - **Court Decisions**: Various German court databases and archives
 - **Format**: All documents converted to Markdown for optimal readability and searchability
 
-## Benchmarking
-
-First results with:
-
-- Open-source LLM (cost-efficient, no proprietary lock-in, runs on EU cloud)
-- 300 norms and 200k cases
-
-Methodology:
-- 10 tough, recent questions (German law; post-update topics)
-- Gold solutions by a domain expert
-- Evaluation: GPT-5 serves as a blind judge with a rubric
-- Reference: r/LocalLLaMA — Agentic Legal Research for German Law — First Benchmark
-
-Result:
-- Even without any optimization, the agent reached GPT-5 level
-
-Why this matters:
-- SOTA accuracy at fractional cost with an auditable, tool-using agent; promising for compliant, on-prem legal assistants.
-
-Next:
-- Targeted domain adaptation and customer GPUs to run in small to midsized offices
-
 ## Populate Laws (First-Time)
 
 The repository includes a working copy of the official scraping tools in `scrapers/gesetze-tools` to download and convert German federal laws to Markdown under `data/gesetze/`.
@@ -933,7 +936,7 @@ Contributions are welcome! Please ensure that:
 
 For technical issues or questions about the codebase, please open an issue in the project repository.
 
-## Next Steps for Production
+## Next Steps Towards Production
 
 - Dockerize services: API container with `uvicorn`, Elasticsearch with persistent volume, optional frontend static hosting.
 - CI/CD: lint (ruff), type-check (mypy), run tests, build frontend; pin dependency ranges and enable Dependabot/Renovate.
