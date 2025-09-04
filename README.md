@@ -12,7 +12,7 @@ LegalGenius combines a comprehensive corpus of German legal documents with an in
 
 - **Modern Web Interface**: React-based frontend with real-time streaming responses
 - **Comprehensive Legal Database**: Complete collection of German federal laws and regulations (Bundesgesetze und -verordnungen) in Markdown format
-- **Court Decision Archive**: Extensive collection of court decisions organized by year (1970-2022)
+- **Court Decision Archive**: Extensive collection of court decisions organized by year (1970-now)
 - **Intelligent Search**: Boolean query support with AND/OR operators and parentheses
 - **Multi-Provider LLM Support**: Compatible with OpenRouter, Nebius, and Ollama
 - **Advanced Text Search**: Powered by Elasticsearch for fast, scalable search with German language optimization and relevance ranking
@@ -27,7 +27,7 @@ LegalGenius combines a comprehensive corpus of German legal documents with an in
 First results with:
 
 - Open-source LLM (cost-efficient, no proprietary lock-in, runs on EU cloud)
-- 300 norms and 200k cases
+- 6,600 laws and 500,000 cases
 
 Methodology:
 - 10 tough, recent questions (German law; post-update topics)
@@ -64,10 +64,15 @@ Next:
 - **Code Deduplication**: Consolidated tool handling logic for better maintainability
 
 ### User Interface Improvements
-- **Integrated Reasoning Traces**: Reasoning content now appears directly in the "Durchsuche Rechtsquellen" loading widget
-- **Compact Display Mode**: Streamlined trace visualization with automatic content truncation
-- **Progressive Disclosure**: Shows only the last step to maintain focus on current progress
-- **Real-time Updates**: Live streaming of tool usage and AI reasoning steps during search
+- **Persistent Research Log**: The "Durchsuche Rechtsquellen" pane now persists across steps and after completion, showing the full history of reasoning and tool calls.
+- **Scrollable History**: Full step/tool history is rendered in a scrollable container with auto‑scroll to the latest event.
+- **Integrated Reasoning Traces**: Reasoning content and tool activity stream into the pane during execution.
+- **Real-time Updates**: Live streaming of tool usage and AI reasoning steps during search.
+
+### Session Logs (Web API)
+- **Per‑Session Persistence**: All streamed events are saved to `logs/sessions/<session_id>.jsonl`.
+- **Session ID on Stream**: The first SSE carries `{ type: 'session', session_id }` so the UI can fetch logs later.
+- **Retrieve Full Log**: `GET /sessions/{session_id}` returns the complete event history for permanent viewing.
 
 ### Streamlined Search Tools
 - **Primary Tool**: `elasticsearch_search` now handles most search operations
