@@ -778,7 +778,8 @@ All documents must be in Markdown format (`.md`) or plain text (`.txt`).
 
 Use `scrapers/export_urteile_markdown_by_year.py` to download the Open Legal Data dump and generate one Markdown file per year. First download the caselaw with
 ```bash
-curl -i https://static.openlegaldata.io/dumps/de/2020-12-10/cases.jsonl.gz --output cases.jsonl
+curl https://static.openlegaldata.io/dumps/de/2020-12-10/cases.jsonl.gz --output cases.jsonl.gz
+gunzip cases.jsonl.gz
 ```
 
 **Outputs:**
