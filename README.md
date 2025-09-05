@@ -795,6 +795,8 @@ python3 scrapers/export_urteile_markdown_by_year.py \
   --download \
   --input scrapers/cases.jsonl \
   --out data/urteile_markdown_by_year
+mkdir data
+mv data/urteile_markdown_by_year data
 ```
 
 **Alternative (run inside `scrapers/`):**

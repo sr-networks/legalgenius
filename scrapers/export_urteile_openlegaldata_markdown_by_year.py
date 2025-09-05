@@ -41,6 +41,8 @@ DATE_PATTERNS = [
     (re.compile(r"^(?P<y>\d{4})$"), "%Y"),
 ]
 TITLE_DATE_RE = re.compile(r"(\d{2}\.\d{2}\.\d{4})")
+DATE_FIELD_RE = re.compile(r'"date"\s*:\s*"([^"]*)"')
+TITLE_FIELD_RE = re.compile(r'"title"\s*:\s*"([^"]*)"')
 
 
 @dataclass(frozen=True)
@@ -111,8 +113,6 @@ def load_decisions(jsonl_path: Path) -> List[Decision]:
                 print(f"Skipping invalid JSON at line {i}: {e}", file=sys.stderr)
                 continue
             url = sanitize(obj.get("url"))
-            if url and url in seen_urls:
-                continue
             title = sanitize(obj.get("title"))
             date_str, parsed = parse_date(sanitize(obj.get("date")), title)
             file_num = sanitize(obj.get("file_number"))
@@ -256,6 +256,178 @@ def write_year_files(out_dir: Path, decisions: List[Decision]) -> Dict[str, int]
     return counts
 
 
+def iter_decisions(jsonl_path: Path) -> Iterable[Decision]:
+    """Streaming generator version of load_decisions to keep memory usage low."""
+    with jsonl_path.open("r", encoding="utf-8") as f:
+        for i, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj: Dict = json.loads(line)
+            except json.JSONDecodeError as e:
+                print(f"Skipping invalid JSON at line {i}: {e}", file=sys.stderr)
+                continue
+            url = sanitize(obj.get("url"))
+            if url and url in seen_urls:
+                continue
+            title = sanitize(obj.get("title"))
+            date_str, parsed = parse_date(sanitize(obj.get("date")), title)
+            file_num = sanitize(obj.get("file_number"))
+            decision_type = sanitize(obj.get("type"))
+            court_obj = obj.get("court")
+            if isinstance(court_obj, dict):
+                court = sanitize(court_obj.get("name")) or sanitize(str(court_obj))
+            else:
+                court = sanitize(court_obj)
+            leitsatz = sanitize(obj.get("leitsatz"))
+            tenor = sanitize(obj.get("tenor"))
+            content = sanitize(obj.get("content"))
+            refs = obj.get("references") or {}
+            laws = tuple(refs.get("laws") or [])
+            cases = tuple(refs.get("cases") or [])
+            dec = Decision(
+                url=url,
+                title=title,
+                date_str=date_str,
+                parsed_date=parsed,
+                file_number=file_num,
+                court=court,
+                decision_type=decision_type,
+                leitsatz=leitsatz,
+                tenor=tenor,
+                content=content,
+                laws=laws,
+                cases=cases,
+            )
+            yield dec
+
+
+def export_streaming(jsonl_path: Path, out_dir: Path) -> Dict[str, int]:
+    """Export decisions to yearly Markdown files using streaming to limit memory usage.
+
+    Strategy:
+    - First pass: iterate JSONL once, assign each decision to a year, and append a compact
+      JSON line to per-year temp files under out_dir/.tmp_years/. Also collect counts per year
+      and per decision type.
+    - Second pass: for each year temp file, load only that year's decisions into memory,
+      sort, render Markdown, and write the final year file. Finally, write index.md.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    tmp_dir = out_dir / ".tmp_years"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    # Clean leftover temp year files from previous runs to avoid appending endlessly
+    for old in tmp_dir.glob("*.jsonl"):
+        try:
+            old.unlink()
+        except Exception:
+            pass
+
+    # Stats
+    counts: Dict[str, int] = defaultdict(int)
+
+    # Helper to append a line to a year file without holding many open FDs
+    def append_year_line(year: str, raw_line: str) -> None:
+        with (tmp_dir / f"{year}.jsonl").open("a", encoding="utf-8") as h:
+            h.write(raw_line)
+            h.write("\n")
+
+    # First pass: read original lines, determine year via regex to avoid full JSON loads
+    with jsonl_path.open("r", encoding="utf-8") as src:
+        for n, line in enumerate(src, 1):
+            raw = line.strip()
+            if not raw:
+                continue
+            # Extract lightweight fields without parsing entire JSON (content may be huge)
+            m_date = DATE_FIELD_RE.search(raw)
+            m_title = TITLE_FIELD_RE.search(raw)
+            title = sanitize(m_title.group(1) if m_title else None)
+            date_raw = sanitize(m_date.group(1) if m_date else None)
+            date_str, parsed = parse_date(date_raw, title)
+            # Compute year like Decision.year would
+            if parsed:
+                y = str(parsed.year)
+            elif date_str and len(date_str) == 4 and date_str.isdigit():
+                y = date_str
+            else:
+                y = "unknown"
+            counts[y] += 1
+            append_year_line(y, raw)
+            if n % 50000 == 0:
+                print(f"Processed {n} decisions...", file=sys.stderr)
+
+
+    # Second pass: per-year assembly
+    written_counts: Dict[str, int] = {}
+    for tmp_file in sorted(tmp_dir.glob("*.jsonl")):
+        year = tmp_file.stem
+        # First sub-pass: compute counts per type and total for header
+        type_counts_year: Dict[str, int] = defaultdict(int)
+        total_in_year = 0
+        with tmp_file.open("r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                total_in_year += 1
+                decision_type = sanitize(obj.get("type"))
+                if decision_type:
+                    type_counts_year[decision_type] += 1
+
+        # Prepare header
+        types_ordered = {k: v for k, v in sorted(type_counts_year.items(), key=lambda kv: (-kv[1], kv[0]))}
+        year_path = out_dir / f"{year}.md"
+        with year_path.open("w", encoding="utf-8") as out_f:
+            out_f.write("---\n")
+            meta = {"year": year, "count": total_in_year, "types": types_ordered}
+            out_f.write(json.dumps(meta, ensure_ascii=False, indent=2) + "\n")
+            out_f.write("---\n\n")
+            out_f.write(f"# Entscheidungen {year}\n\n")
+            if types_ordered:
+                out_f.write("## Entscheidungstypen\n\n")
+                for t, c in types_ordered.items():
+                    out_f.write(f"- {t}: {c}\n")
+                out_f.write("\n")
+            # Second sub-pass: stream decisions and render directly to Markdown (no sorting to save memory)
+            with tmp_file.open("r", encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        obj = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    title = sanitize(obj.get("title"))
+                    date_str, parsed = parse_date(sanitize(obj.get("date")), title)
+                    court_obj = obj.get("court")
+                    if isinstance(court_obj, dict):
+                        court = sanitize(court_obj.get("name")) or sanitize(str(court_obj))
+                    else:
+                        court = sanitize(court_obj)
+                    d = Decision(
+                        url=sanitize(obj.get("url")),
+                        title=title,
+                        date_str=date_str,
+                        parsed_date=parsed,
+                        file_number=sanitize(obj.get("file_number")),
+                        court=court,
+                        decision_type=sanitize(obj.get("type")),
+                        leitsatz=sanitize(obj.get("leitsatz")),
+                        tenor=sanitize(obj.get("tenor")),
+                        content=sanitize(obj.get("content")),
+                        laws=tuple((obj.get("references") or {}).get("laws") or ()),
+                        cases=tuple((obj.get("references") or {}).get("cases") or ()),
+                    )
+                    out_f.write(render_decision_md(d))
+        written_counts[year] = total_in_year
+
+    # index
+    index_lines: List[str] = ["# Index: Entscheidungen nach Jahr\n\n"]
+    for year in sorted(written_counts.keys(), reverse=True):
+        index_lines.append(f"- [{year}]({year}.md) — {written_counts[year]} Entscheidungen\n")
+    (out_dir / "index.md").write_text("".join(index_lines), encoding="utf-8")
+    return written_counts
+
+
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Export JSONL decisions to yearly Markdown files")
     p.add_argument("--input", default="./cases.jsonl", help="Path to cases.jsonl")
@@ -304,9 +476,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"Input not found: {jsonl_path}", file=sys.stderr)
             return 2
     print(f"Loading: {jsonl_path}")
-    decisions = load_decisions(jsonl_path)
-    print(f"Parsed {len(decisions)} decisions")
-    counts = write_year_files(Path(args.out), decisions)
+    # Use streaming export to avoid high memory usage on large dumps
+    counts = export_streaming(jsonl_path, Path(args.out))
     total = sum(counts.values())
     print(f"Wrote {len(counts)} year files, {total} entries -> {args.out}")
     return 0
