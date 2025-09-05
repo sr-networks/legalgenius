@@ -118,6 +118,9 @@ export LLM_PROVIDER="ollama"
 ```
 
 **3. Start Elasticsearch:**
+
+(In first use, begin with loading legal documents and indexing, see below.)
+
 ```bash
 # Start Elasticsearch container
 docker start elasticsearch-simple
@@ -763,7 +766,7 @@ make web-dev
 - **API not responding**: Check if backend is running with `curl http://localhost:8000/health`
 - **Frontend not loading**: Check browser console (F12) for errors
 
-### Adding New Documents
+### Adding Legal Documents
 
 Legal documents should be placed in the appropriate subdirectory within `data/`:
 - Laws and regulations: `data/gesetze/`
@@ -773,7 +776,10 @@ All documents must be in Markdown format (`.md`) or plain text (`.txt`).
 
 ### Court Decisions Dataset (Open Legal Data)
 
-Use `scrapers/export_urteile_markdown_by_year.py` to download the Open Legal Data dump and generate one Markdown file per year.
+Use `scrapers/export_urteile_markdown_by_year.py` to download the Open Legal Data dump and generate one Markdown file per year. First download the caselaw with
+```bash
+curl -i https://static.openlegaldata.io/dumps/de/2020-12-10/cases.jsonl.gz --output cases.jsonl
+```
 
 **Outputs:**
 - One file per year: `<out>/<YYYY>.md` with all decisions sorted by date (desc)
