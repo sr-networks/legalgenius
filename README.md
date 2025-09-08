@@ -27,7 +27,7 @@ LegalGenius combines a comprehensive corpus of German legal documents with an in
 First results with:
 
 - Open-source LLM (cost-efficient, no proprietary lock-in, runs on EU cloud)
-- 6,600 laws and 500,000 cases
+- 6,000 laws and 300,000 cases
 
 Methodology:
 - 10 tough, recent questions (German law; post-update topics)
@@ -119,7 +119,6 @@ export LLM_PROVIDER="ollama"
 
 **3. Start Elasticsearch:**
 
-(In first use, begin with loading legal documents and indexing, see below.)
 
 ```bash
 # Start Elasticsearch container
@@ -135,6 +134,9 @@ docker run -d --name elasticsearch-simple \
 ```
 
 **4. Start the application:**
+
+(In first use, begin with loading legal documents and indexing, see below.)
+
 ```bash
 # Terminal 1: API server
 make api
@@ -452,16 +454,16 @@ To reindex specific document types (e.g., after data updates):
 ```bash
 # Reindex all urteile (court decisions) - clean approach
 curl -X DELETE "localhost:9200/legal_urteile"
-python simple_elasticsearch_indexer.py --urteile-only
+python3 simple_elasticsearch_indexer.py --urteile-only
 
 # Reindex all gesetze (laws and regulations) - clean approach  
 curl -X DELETE "localhost:9200/legal_gesetze"
-python simple_elasticsearch_indexer.py --gesetze-only
+python3 simple_elasticsearch_indexer.py --gesetze-only
 
 # Full reindex of everything
 curl -X DELETE "localhost:9200/legal_urteile"
 curl -X DELETE "localhost:9200/legal_gesetze"
-python simple_elasticsearch_indexer.py
+python3 simple_elasticsearch_indexer.py
 
 # Quick reindex (adds to existing - may create duplicates)
 python simple_elasticsearch_indexer.py --urteile-only
@@ -622,14 +624,14 @@ python simple_elasticsearch_indexer.py --search "Mietrecht BGH" --urteile-only
 **Index Management:**
 ```bash
 # Index all documents (laws + court decisions)
-python simple_elasticsearch_indexer.py
+python3 simple_elasticsearch_indexer.py
 
 # Index only specific types
-python simple_elasticsearch_indexer.py --gesetze-only
-python simple_elasticsearch_indexer.py --urteile-only
+python3 simple_elasticsearch_indexer.py --gesetze-only
+python3 simple_elasticsearch_indexer.py --urteile-only
 
 # Check index statistics
-python simple_elasticsearch_indexer.py --stats
+python3 simple_elasticsearch_indexer.py --stats
 ```
 
 **Search Results Include:**
@@ -642,16 +644,16 @@ python simple_elasticsearch_indexer.py --stats
 **Example Searches:**
 ```bash
 # Comprehensive rental law research
-python simple_elasticsearch_indexer.py --search "Mietrecht" "Kündigung" --index "legal_gesetze,legal_urteile"
+python3 simple_elasticsearch_indexer.py --search "Mietrecht" "Kündigung" --index "legal_gesetze,legal_urteile"
 
 # Divorce law across legislation and jurisprudence
-python simple_elasticsearch_indexer.py --search "Scheidung" "Unterhalt" --index "legal_gesetze,legal_urteile"
+python3 simple_elasticsearch_indexer.py --search "Scheidung" "Unterhalt" --index "legal_gesetze,legal_urteile"
 
 # Specific BGB provisions with case law
-python simple_elasticsearch_indexer.py --search "BGB" "§ 323" "Rücktritt" --index "legal_gesetze,legal_urteile"
+python3 simple_elasticsearch_indexer.py --search "BGB" "§ 323" "Rücktritt" --index "legal_gesetze,legal_urteile"
 
 # Contract law research
-python simple_elasticsearch_indexer.py --search "Vertrag" "Willenserklärung" --index "legal_gesetze,legal_urteile"
+python3 simple_elasticsearch_indexer.py --search "Vertrag" "Willenserklärung" --index "legal_gesetze,legal_urteile"
 ```
 
 This direct search method is ideal for:
@@ -709,6 +711,8 @@ legalgenius/
 - `make api`: Start the FastAPI backend server (port 8000)
 - `make web-install`: Install frontend dependencies
 - `make web-dev`: Start the React development server (port 5173)
+
+TODOS:
 - `make gesetze-install`: Install scraper dependencies for laws
 - `make gesetze-update-list`: Refresh law slug list from gesetze-im-internet.de
 - `make gesetze-download`: Download all laws (XML) into `scrapers/gesetze-tools/laws/`
@@ -866,10 +870,20 @@ The repository includes a working copy of the official scraping tools in `scrape
 
 ### Download laws (XML)
 
+- Clone the repository:
+  ```bash
+  git clone https://github.com/bundestag/gesetze-tools.git
+  cd gesetze-tools
+  pip3 install -r requirements.txt
+  ```
 - Refresh the law list (optional):
-  - `python lawde.py updatelist`
+  ```bash
+  python lawde.py updatelist
+  ```
 - Download all laws (takes hours, requires stable network):
-  - `python lawde.py loadall --path laws`
+  ```bash
+  python lawde.py loadall --path laws
+  ```
 
 Tips:
 - To download only specific laws (faster), use slugs: `python lawde.py load bgb stgb vwvfg --path laws`
@@ -905,19 +919,22 @@ Alternative (Makefile):
 
 Fetch court decisions from the official Neuris API and write Markdown grouped by year under `data/urteile_markdown_by_year/`.
 
-Manual usage:
+Manual usage (python CLI):
 ```bash
-# Default: 2000..current year
-python3 scrapers/fetch_urteile_neuris.py --from-year 2000 --out data/urteile_markdown_by_year
+# All courts for an explicit date range
+python3 scrapers/fetch_neuris_urteile_from_xml.py --date-from 2019-01-01 --date-to 2019-12-31
 
-# To target the public testphase endpoint explicitly:
-python3 scrapers/fetch_urteile_neuris.py \
-  --base-url https://testphase.rechtsinformationen.bund.de \
-  --search-path /v1/case-law \
-  --detail-path /v1/case-law/{id} \
-  --from-year 2010 --to-year 2024 \
-  --from-param decisionDateFrom --to-param decisionDateTo \
-  --out data/urteile_markdown_by_year
+# Year range (all courts), segmented per year
+python3 scrapers/fetch_neuris_urteile_from_xml.py --year-from 2010 --year-to 2025
+
+# Court-wise segmentation (opt-in)
+python3 scrapers/fetch_neuris_urteile_from_xml.py --by-court --year-from 2019 --year-to 2019
+
+# Specific courts only
+python3 scrapers/fetch_neuris_urteile_from_xml.py --courts BGH BVerfG --date-from 2020-01-01 --date-to 2020-12-31
+
+# Limit pages per segment (useful to sanity-check)
+python3 scrapers/fetch_neuris_urteile_from_xml.py --date-from 2019-01-01 --date-to 2019-01-31 --max-pages 2
 ```
 
 Makefile shortcut:
@@ -933,11 +950,23 @@ make urteile-neuris urteils-years=1990 urteils-years-to=2024 \
 ```
 
 Notes:
-- The script de-duplicates entries by source URL or id and merges new decisions into existing yearly files.
-- If the API requires credentials, pass `--api-key` to the script; it will use `Authorization: Bearer <key>`.
-- Refer to the official guides: https://docs.rechtsinformationen.bund.de/guides/ for endpoint details.
- - If you see a DNS error for the host, double‑check the base URL. For the test environment use `https://testphase.rechtsinformationen.bund.de`.
- - Some deployments use different date parameter names. For the testphase case-law endpoint, pass `--from-param decisionDateFrom --to-param decisionDateTo`. If you still see 0 results, try adding a query with `--query '*'` or other API-specific filters via `--extra key=value`.
+- Default behavior is to include ALL courts. Use `--by-court`, `--court`, or `--courts` to filter/segment by court.
+- The scraper paginates by preserving your filters on each page and de‑duplicates by decision id.
+- It optionally fetches Akoma Ntoso XML to extract Randnummern where available.
+- If you see a DNS error for the host, double‑check the base URL. The public test endpoint is `https://testphase.rechtsinformationen.bund.de`.
+- For quick validation, use `--max-pages` to limit pages per segment before a full run.
+
+Year-by-year helper script:
+```bash
+# Make executable
+chmod +x scripts/scrape_years.sh
+
+# Run default range 2010..2025 and print "YEAR COUNT" lines only
+./scripts/scrape_years.sh
+
+# Custom range
+./scripts/scrape_years.sh 2000 2005
+```
 
 ## Contributing
 
