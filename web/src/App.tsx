@@ -4,8 +4,8 @@ import remarkGfm from "remark-gfm";
 import ReasoningTraceBox from "./components/ReasoningTraceBox";
 import TokenCounter from "./components/TokenCounter";
 
-// Use Vite dev proxy (see web/vite.config.ts) so this works locally and via ngrok
-const API_BASE = "/api";
+// Use Vite environment variables for API base URL
+const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 
 export default function App() {
   const [query, setQuery] = useState("");

@@ -372,8 +372,12 @@ def build_dispatch_functions(mcp: MCPClient, cfg: dict) -> Dict[str, Any]:
         # Line-based mode
         if line_number is not None:
             params["line_number"] = int(line_number)
-            params["context_lines"] = context_lines or 2
-            params["max_lines"] = max_lines or 10
+            params["context_lines"] = (2 if context_lines is None else int(context_lines))
+            # If max_lines is not provided, disable truncation so large context windows are respected
+            if max_lines is not None:
+                params["max_lines"] = int(max_lines)
+            else:
+                params["max_lines"] = 0
         # Byte-based mode
         else:
             if start is None or end is None:
@@ -381,7 +385,10 @@ def build_dispatch_functions(mcp: MCPClient, cfg: dict) -> Dict[str, Any]:
             params["start"] = int(start)
             params["end"] = int(end)
             params["context"] = context or cfg.get("context_bytes", 300)
-            params["max_lines"] = max_lines or 10
+            if max_lines is not None:
+                params["max_lines"] = int(max_lines)
+            else:
+                params["max_lines"] = 0
         
         res = mcp.call_tool("read_file_range", params)
         return json.dumps(res, ensure_ascii=False)
