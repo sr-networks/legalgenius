@@ -44,7 +44,7 @@ Why this matters:
 Next:
 - Targeted domain adaptation and customer GPUs to run in small to midsized offices
 
-<img width="1087" height="711" alt="Bar Chart" src="https://github.com/user-attachments/assets/56c75ddc-2c97-40ef-bfae-cab9da36f381" />
+<img width="545" height="355" alt="Bar Chart" src="https://github.com/user-attachments/assets/56c75ddc-2c97-40ef-bfae-cab9da36f381" />
 
 
 ## Recent Improvements
