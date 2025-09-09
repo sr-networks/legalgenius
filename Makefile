@@ -18,13 +18,13 @@ venv:
 	python3 -m venv venv
 
 api:
-	. venv/bin/activate && pip install -r requirements.txt && uvicorn web_server.api:app --reload --port 8000
+	. venv/bin/activate && pip install -r requirements.txt && uvicorn web_server.api:app --reload --port 8000 --env-file .env
 
 web-install:
 	npm --prefix web install
 
 web-dev:
-	npm --prefix web run dev
+	npm --prefix web run dev -- --host 0.0.0.0 --port 5173
 
 # ---- Bundesgesetze scraping helpers ----
 

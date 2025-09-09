@@ -3,12 +3,16 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import ReasoningTraceBox from "./components/ReasoningTraceBox";
 import TokenCounter from "./components/TokenCounter";
-import { SignedIn, SignedOut, SignInButton, UserButton } from "@clerk/clerk-react";
+import { SignedIn, SignedOut, SignInButton, UserButton, useAuth, useUser } from "@clerk/clerk-react";
+import CreditBadge from "./components/CreditBadge";
+import AdminCreditsPanel from "./components/AdminCreditsPanel";
 
 // Use Vite environment variables for API base URL
 const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 
 export default function App() {
+  const { getToken, isSignedIn } = useAuth();
+  const { user } = useUser();
   const [query, setQuery] = useState("");
   const [answer, setAnswer] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -20,6 +24,38 @@ export default function App() {
   // Token tracking state
   const [totalTokensSent, setTotalTokensSent] = useState(0);
   const [totalTokensReceived, setTotalTokensReceived] = useState(0);
+  // Credits and admin state
+  const [credits, setCredits] = useState<{ euro_balance_cents: number } | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  // Fetch my profile and credits when signed in
+  useEffect(() => {
+    if (!isSignedIn) return;
+    (async () => {
+      try {
+        const token = await getToken();
+        if (!token) return;
+        const meRes = await fetch(`${API_BASE}/me`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (meRes.ok) {
+          const me = await meRes.json();
+          setIsAdmin(!!me?.is_admin);
+        }
+        const crRes = await fetch(`${API_BASE}/me/credits`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (crRes.ok) {
+          const cr = await crRes.json();
+          setCredits({
+            euro_balance_cents: cr?.credits?.euro_balance_cents ?? 0,
+          });
+        }
+      } catch (e) {
+        // ignore
+      }
+    })();
+  }, [isSignedIn, getToken]);
 
   async function ask() {
     setLoading(true);
@@ -29,9 +65,13 @@ export default function App() {
     try {
       const controller = new AbortController();
       controllerRef.current = controller;
+      const token = await getToken();
       const res = await fetch(`${API_BASE}/stream`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ query }),
         signal: controller.signal,
       });
@@ -77,6 +117,12 @@ export default function App() {
               setTotalTokensSent((prev) => prev + (evt.tokens_sent || 0));
               setTotalTokensReceived((prev) => prev + (evt.tokens_received || 0));
             }
+            if (t === "credits") {
+              const cr = evt.credits;
+              if (cr) {
+                setCredits({ euro_balance_cents: cr.euro_balance_cents ?? 0 });
+              }
+            }
             if (t === "complete") {
               setLoading(false);
             }
@@ -89,9 +135,13 @@ export default function App() {
       } else {
         // Fallback to non-streaming endpoint (works better behind some proxies like ngrok)
         try {
+          const token = await getToken();
           const res2 = await fetch(`${API_BASE}/ask`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
             body: JSON.stringify({ query }),
             signal: controllerRef.current?.signal,
           });
@@ -101,6 +151,12 @@ export default function App() {
           }
           const data = await res2.json();
           setAnswer(data?.answer ?? "");
+          // Update credits if backend returned snapshot
+          if (data?.credits) {
+            setCredits({
+              euro_balance_cents: data.credits.euro_balance_cents ?? 0,
+            });
+          }
         } catch (e2: any) {
           setError(e2?.message || String(e2));
         }
@@ -174,7 +230,10 @@ export default function App() {
               }}>Intelligente Recherche im deutschen Recht</p>
             </div>
           </div>
-          <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <SignedIn>
+              <CreditBadge credits={credits} />
+            </SignedIn>
             <SignedOut>
               <SignInButton mode="modal">
                 <button style={{
@@ -687,6 +746,13 @@ export default function App() {
             totalTokensSent={totalTokensSent}
             totalTokensReceived={totalTokensReceived}
           />
+
+          {/* Admin Panel for managing credits */}
+          {isAdmin && (
+            <div style={{ marginTop: '1rem' }}>
+              <AdminCreditsPanel onSuccess={(cr: { euro_balance_cents: number }) => setCredits({ euro_balance_cents: cr.euro_balance_cents })} />
+            </div>
+          )}
 
           {/* Footer */}
           <div style={{

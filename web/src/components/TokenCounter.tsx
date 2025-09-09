@@ -11,10 +11,9 @@ export default function TokenCounter({
   totalTokensReceived, 
   currentSessionCost 
 }: TokenCounterProps) {
-  const totalTokens = totalTokensSent + totalTokensReceived;
   
   // Debug logging
-  console.log("TokenCounter render:", { totalTokensSent, totalTokensReceived, totalTokens });
+  console.log("TokenCounter render:", { totalTokensSent, totalTokensReceived });
   
   // Detect small screens to avoid overlaying main content on phones
   const [isMobile, setIsMobile] = useState(false);
@@ -37,10 +36,7 @@ export default function TokenCounter({
     };
   }, []);
   
-  // Rough cost estimation (varies by provider/model)
-  // Using approximate GPT-4 pricing as baseline: ~$0.03/1K input tokens, ~$0.06/1K output tokens
-  // Beta adjustment: reduce displayed cost by 10x
-  const estimatedCost = (totalTokensSent / 1000 * 0.003) + (totalTokensReceived / 1000 * 0.006);
+  // Removed estimated cost display
 
   const formatNumber = (num: number): string => {
     if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
@@ -138,43 +134,7 @@ export default function TokenCounter({
         </div>
       </div>
       
-      <div style={{
-        borderTop: '1px solid #e2e8f0',
-        paddingTop: '12px',
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center'
-      }}>
-        <div>
-          <div style={{
-            fontSize: '0.75rem',
-            color: '#64748b',
-            fontWeight: 500,
-            marginBottom: '2px'
-          }}>Total</div>
-          <div style={{
-            fontSize: '1.1rem',
-            fontWeight: 700,
-            color: '#1e293b'
-          }}>{formatNumber(totalTokens)}</div>
-        </div>
-        
-        <div style={{
-          textAlign: 'right'
-        }}>
-          <div style={{
-            fontSize: '0.75rem',
-            color: '#64748b',
-            fontWeight: 500,
-            marginBottom: '2px'
-          }}>Est. cost (na)</div>
-          <div style={{
-            fontSize: '0.9rem',
-            fontWeight: 600,
-            color: '#059669'
-          }}>~${estimatedCost.toFixed(4)}</div>
-        </div>
-      </div>
+      {/* Total and estimated cost removed per request */}
       
       <div style={{
         marginTop: '12px',

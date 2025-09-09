@@ -5,7 +5,7 @@ from pathlib import Path
 from uuid import uuid4
 from typing import Optional, Dict, Any, Generator, List
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -13,6 +13,10 @@ from openai import OpenAI
 
 # Reuse existing agent implementation
 from client.agent_cli import MCPClient, run_agent, load_config, _build_tools_spec, SYSTEM_PROMPT, build_dispatch_functions
+from .models import init_db, get_db, get_or_create_user, deduct_tokens, set_credits, UserCredit
+from sqlalchemy.orm import Session
+from jose import jwt
+import requests
 import sys
 from io import StringIO
 import re
@@ -52,6 +56,17 @@ RESOLVED_PROVIDER: str = os.environ.get("LLM_PROVIDER", "nebius")
 RESOLVED_MODEL: Optional[str] = None
 RESOLVED_REFERER: Optional[str] = None
 RESOLVED_SITE_TITLE: Optional[str] = None
+CLERK_JWKS_URL: Optional[str] = os.environ.get("CLERK_JWKS_URL")
+CLERK_ISSUER: Optional[str] = os.environ.get("CLERK_ISSUER")
+ADMIN_EMAILS: list[str] = [e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()]
+ADMIN_USER_IDS: list[str] = [e.strip() for e in os.environ.get("ADMIN_USER_IDS", "").split(",") if e.strip()]
+_JWKS_CACHE: Optional[dict] = None
+
+
+class AuthedUser(BaseModel):
+    user_id: str
+    email: Optional[str] = None
+    is_admin: bool = False
 
 # ---- JSONL logging (./logs/api) ----
 LOG_DIR = Path("./logs/api")
@@ -241,6 +256,11 @@ def run_agent_with_token_tracking(
 @app.on_event("startup")
 def _startup() -> None:
     global MCP, OPENAI_CLIENT, RESOLVED_PROVIDER, RESOLVED_MODEL, RESOLVED_REFERER, RESOLVED_SITE_TITLE
+    # Initialize DB
+    try:
+        init_db()
+    except Exception:
+        pass
     MCP = MCPClient(server_cmd=None, env=os.environ.copy())
     llm = _resolve_llm(provider=os.environ.get("LLM_PROVIDER", "nebius"), model_override=None)
     OPENAI_CLIENT = llm["client"]
@@ -265,14 +285,121 @@ def health() -> Dict[str, Any]:
     return {"ok": True, "provider": RESOLVED_PROVIDER, "model": RESOLVED_MODEL}
 
 
+# ---- Auth helpers (Clerk JWT) ----
+def _load_jwks() -> Optional[dict]:
+    global _JWKS_CACHE
+    if not CLERK_JWKS_URL:
+        return None
+    try:
+        if _JWKS_CACHE is None:
+            resp = requests.get(CLERK_JWKS_URL, timeout=5)
+            resp.raise_for_status()
+            _JWKS_CACHE = resp.json()
+        return _JWKS_CACHE
+    except Exception:
+        return None
+
+
+def _verify_bearer_token(authorization: Optional[str]) -> Optional[dict]:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return None
+    token = authorization.split(" ", 1)[1]
+    # If Clerk config is missing, allow dev mode without strict verification
+    if not CLERK_JWKS_URL or not CLERK_ISSUER:
+        try:
+            return jwt.get_unverified_claims(token)
+        except Exception:
+            return None
+    jwks = _load_jwks()
+    if not jwks:
+        return None
+    try:
+        header = jwt.get_unverified_header(token)
+        kid = header.get("kid")
+        key = None
+        for k in jwks.get("keys", []):
+            if k.get("kid") == kid:
+                key = k
+                break
+        if not key:
+            return None
+        claims = jwt.decode(token, key, options={
+            "verify_aud": False,  # simplify
+            "verify_at_hash": False,
+        }, issuer=CLERK_ISSUER, algorithms=[key.get("alg", "RS256")])
+        return claims
+    except Exception:
+        return None
+
+
+def get_current_user(Authorization: Optional[str] = Header(default=None)) -> AuthedUser:
+    claims = _verify_bearer_token(Authorization)
+    if not claims:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    # Clerk standard claims
+    user_id = claims.get("sub") or claims.get("user_id") or claims.get("sid")
+    email = None
+    # Try common places for primary email
+    email = (
+        (claims.get("email") if isinstance(claims.get("email"), str) else None)
+        or (claims.get("primary_email_address_id") if isinstance(claims.get("primary_email_address_id"), str) else None)
+    )
+    # Clerk often provides email addresses in custom claims
+    if not email:
+        emails = claims.get("email_addresses")
+        if isinstance(emails, list) and emails:
+            # choose the first
+            maybe = emails[0]
+            if isinstance(maybe, dict):
+                email = maybe.get("email_address")
+            elif isinstance(maybe, str):
+                email = maybe
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token: no subject")
+    is_admin = False
+    try:
+        is_admin = bool((email and email.lower() in ADMIN_EMAILS) or (user_id in ADMIN_USER_IDS))
+    except Exception:
+        is_admin = False
+    return AuthedUser(user_id=user_id, email=email, is_admin=is_admin)
+
+
+# ---- Credit models / endpoints ----
+class SetCreditsRequest(BaseModel):
+    user_id: str
+    euro_balance_cents: Optional[int] = None
+    email: Optional[str] = None
+
+
+@app.get("/me")
+def me(user: AuthedUser = Depends(get_current_user)) -> Dict[str, Any]:
+    return {"user_id": user.user_id, "email": user.email, "is_admin": user.is_admin}
+
+
+@app.get("/me/credits")
+def my_credits(user: AuthedUser = Depends(get_current_user), db: Session = Depends(get_db)) -> Dict[str, Any]:
+    uc = get_or_create_user(db, user.user_id, user.email)
+    return {"ok": True, "credits": uc.as_dict()}
+
+
+@app.post("/admin/set_credits")
+def admin_set_credits(req: SetCreditsRequest, user: AuthedUser = Depends(get_current_user), db: Session = Depends(get_db)) -> Dict[str, Any]:
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    uc = set_credits(db, req.user_id, euro_balance_cents=req.euro_balance_cents, email=req.email)
+    return {"ok": True, "credits": uc.as_dict()}
+
+
 @app.post("/test")
-def test(req: AskRequest) -> Dict[str, Any]:
+def test(req: AskRequest, user: AuthedUser = Depends(get_current_user), db: Session = Depends(get_db)) -> Dict[str, Any]:
     """Legal research endpoint with limited steps"""
     global MCP
     if not MCP:
         return {"error": "MCP server not ready"}
     
     try:
+        # Ensure user exists in DB
+        uc = get_or_create_user(db, user.user_id, user.email)
         llm = _resolve_llm(provider=req.provider or RESOLVED_PROVIDER, model_override=req.model)
         client = llm["client"]
         model = llm["model"]
@@ -291,18 +418,32 @@ def test(req: AskRequest) -> Dict[str, Any]:
             provider=llm["provider"],
             tools_mode="auto",
         )
-        return {
-            "answer": result["answer"],
-            "provider": llm["provider"],
-            "model": model,
-            "token_usage": result["token_usage"]
-        }
+        # Deduct tokens (separate in/out)
+        try:
+            usage = result.get("token_usage", {})
+            updated = deduct_tokens(db, user.user_id, usage.get("total_tokens_sent", 0), usage.get("total_tokens_received", 0))
+            # Include updated credits snapshot
+            return {
+                "answer": result["answer"],
+                "provider": llm["provider"],
+                "model": model,
+                "token_usage": result["token_usage"],
+                "credits": updated.as_dict(),
+            }
+        except Exception:
+            # If deduction failed, still return basic info
+            return {
+                "answer": result["answer"],
+                "provider": llm["provider"],
+                "model": model,
+                "token_usage": result["token_usage"],
+            }
     except Exception as e:
         return {"error": str(e)}
 
 
 @app.post("/ask")
-def ask(req: AskRequest) -> Dict[str, Any]:
+def ask(req: AskRequest, user: AuthedUser = Depends(get_current_user), db: Session = Depends(get_db)) -> Dict[str, Any]:
     global MCP, OPENAI_CLIENT, RESOLVED_PROVIDER, RESOLVED_MODEL
     if not MCP or not OPENAI_CLIENT:
         raise HTTPException(status_code=503, detail="Server is not ready")
@@ -310,6 +451,8 @@ def ask(req: AskRequest) -> Dict[str, Any]:
     # Allow request-level override of provider/model
     try:
         start_ts = time.time()
+        # Ensure user exists and has some balance (soft check)
+        uc = get_or_create_user(db, user.user_id, user.email)
         llm = _resolve_llm(provider=req.provider or RESOLVED_PROVIDER, model_override=req.model)
         client = llm["client"]
         model = llm["model"]
@@ -330,6 +473,13 @@ def ask(req: AskRequest) -> Dict[str, Any]:
             "answer": result["answer"],
             "token_usage": result["token_usage"]
         }
+        # Deduct tokens and attach credits snapshot
+        try:
+            usage = result.get("token_usage", {})
+            updated = deduct_tokens(db, user.user_id, usage.get("total_tokens_sent", 0), usage.get("total_tokens_received", 0))
+            resp["credits"] = updated.as_dict()
+        except Exception:
+            pass
         end_ts = time.time()
         try:
             _log_interaction({
@@ -455,7 +605,8 @@ def stream_agent_response(
     model: str,
     session_id: str,
     api_key: Optional[str] = None,
-    base_url: Optional[str] = None
+    base_url: Optional[str] = None,
+    user: Optional[AuthedUser] = None,
 ) -> Generator[str, None, None]:
     """Stream agent response with real-time tool usage"""
     
@@ -531,6 +682,24 @@ def stream_agent_response(
                     total_tokens_sent += tokens_sent
                     total_tokens_received += tokens_received
                     yield f"data: {json.dumps({'type': 'token_usage', 'tokens_sent': tokens_sent, 'tokens_received': tokens_received, 'step': steps, 'timestamp': time.time()})}\n\n"
+                    # Per-step deduction if user provided
+                    try:
+                        if user:
+                            from .models import SessionLocal
+                            db = SessionLocal()
+                            try:
+                                updated = deduct_tokens(db, user.user_id, tokens_sent, tokens_received)
+                                # Emit updated credits snapshot
+                                yield f"data: {json.dumps({'type': 'credits', 'credits': updated.as_dict(), 'timestamp': time.time()})}\n\n"
+                                # If euro balance went negative, stop early
+                                if updated.euro_balance_cents < 0:
+                                    err_evt = {'type': 'error', 'message': 'Guthaben erschöpft. Bitte laden Sie Ihr Konto auf.'}
+                                    yield f"data: {json.dumps({**err_evt, 'timestamp': time.time()})}\n\n"
+                                    return
+                            finally:
+                                db.close()
+                    except Exception:
+                        pass
                 
             except Exception as e:
                 yield f"data: {json.dumps({'type': 'error', 'message': f'LLM Fehler: {str(e)}', 'timestamp': time.time()})}\n\n"
@@ -673,7 +842,7 @@ def stream_agent_response(
 
 
 @app.post("/stream")
-def stream_ask(req: AskRequest):
+def stream_ask(req: AskRequest, user: AuthedUser = Depends(get_current_user)):
     """Streaming endpoint for real-time agent responses"""
     session_id = _session_start()
     def event_publisher():
@@ -683,6 +852,7 @@ def stream_ask(req: AskRequest):
                 provider=req.provider or RESOLVED_PROVIDER,
                 model=req.model or RESOLVED_MODEL,
                 session_id=session_id,
+                user=user,
             ):
                 yield event
         except Exception as e:
