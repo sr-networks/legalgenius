@@ -44,7 +44,7 @@ Why this matters:
 Next:
 - Targeted domain adaptation and customer GPUs to run in small to midsized offices
 
-![agentic-legal-research-for-german-law-first-benchmark-v0-btdmsvjhwclf1 jpg](https://github.com/user-attachments/assets/07a46623-9b0c-472a-862e-07854e6bb106)
+<img width="545" height="355" alt="Bar Chart" src="https://github.com/user-attachments/assets/56c75ddc-2c97-40ef-bfae-cab9da36f381" />
 
 
 ## Recent Improvements
