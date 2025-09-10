@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/main.tsx","./src/components/reasoningtracebox.tsx","./src/components/tokencounter.tsx","./src/utils/api.ts"],"version":"5.9.2"}
+{"root":["./src/App.tsx","./src/env.d.ts","./src/main.tsx","./src/components/AdminCreditsPanel.tsx","./src/components/AdminUsersTab.tsx","./src/components/CreditBadge.tsx","./src/components/ReasoningTraceBox.tsx","./src/components/TokenCounter.tsx","./src/utils/api.ts"],"version":"5.9.2"}

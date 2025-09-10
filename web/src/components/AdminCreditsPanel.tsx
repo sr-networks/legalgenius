@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useAuth } from "@clerk/clerk-react";
 
-type CreditsSnapshot = {
+export type CreditsSnapshot = {
   user_id: string;
   email?: string | null;
   euro_balance_cents: number;

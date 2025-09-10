@@ -1,0 +1,29 @@
+[Unit]
+Description=LegalGenius Frontend (Vite preview serving built assets)
+After=network-online.target legalgenius-backend.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sten
+Group=sten
+WorkingDirectory=/home/sten/legalgenius/web
+# Frontend build-time env (e.g., VITE_CLERK_PUBLISHABLE_KEY)
+# Create /home/sten/legalgenius/web/.env.local with necessary VITE_* variables
+EnvironmentFile=/home/sten/legalgenius/web/.env.local
+# Ensure dependencies and build before serving
+ExecStartPre=/usr/bin/npm ci --prefix /home/sten/legalgenius/web
+ExecStartPre=/usr/bin/npm --prefix /home/sten/legalgenius/web run build
+# Serve the built dist on 0.0.0.0:5173
+ExecStart=/usr/bin/npm --prefix /home/sten/legalgenius/web run preview -- --host 0.0.0.0 --port 5173
+Restart=always
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=false
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

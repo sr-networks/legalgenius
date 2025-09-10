@@ -16,7 +16,7 @@ if (container) {
   const root = createRoot(container);
   root.render(
     <React.StrictMode>
-      <ClerkProvider publishableKey={PUBLISHABLE_KEY} afterSignOutUrl="/">
+      <ClerkProvider publishableKey={PUBLISHABLE_KEY || ""} afterSignOutUrl="/">
         <App />
       </ClerkProvider>
     </React.StrictMode>

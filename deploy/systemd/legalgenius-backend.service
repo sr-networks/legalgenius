@@ -1,0 +1,32 @@
+[Unit]
+Description=LegalGenius Backend API (FastAPI/Uvicorn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sten
+Group=sten
+WorkingDirectory=/home/sten/legalgenius
+# Load secrets and config like LLM keys, Clerk, etc.
+EnvironmentFile=/home/sten/legalgenius/.env
+# Ensure local package imports work when running from the repo
+Environment=PYTHONPATH=/home/sten/legalgenius
+# Explicit default API host/port (can be overridden in .env)
+Environment=API_HOST=0.0.0.0
+Environment=API_PORT=8000
+# Use the project venv's uvicorn if present. Adjust the path if you use a different venv.
+ExecStart=/home/sten/legalgenius/venv/bin/uvicorn web_server.api:app --host ${API_HOST} --port ${API_PORT}
+Restart=always
+RestartSec=5
+# Give the process a bit more open files (optional)
+LimitNOFILE=65535
+
+# Hardening (tune if needed)
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=false
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
