@@ -135,7 +135,94 @@ def deduct_tokens(db: Session, user_id: str, tokens_in: int, tokens_out: int) ->
 def set_credits(db: Session, user_id: str, euro_balance_cents: Optional[int] = None, email: Optional[str] = None) -> UserCredit:
     uc = db.get(UserCredit, user_id)
     if uc is None:
-        uc = UserCredit(user_id=user_id, email=email or None)
+        # Detect legacy columns that might still exist in the SQLite table, e.g. 'in_balance'/'out_balance'
+        legacy_cols: set[str] = set()
+        try:
+            # Works for SQLite; for other DBs it's harmless if it fails
+            # Use engine.connect() to avoid closing the Session's connection
+            with engine.connect() as conn:
+                res = conn.exec_driver_sql("PRAGMA table_info(user_credits)")
+                cols = {row[1] for row in res.fetchall()}  # row[1] is the column name
+                if "in_balance" in cols:
+                    legacy_cols.add("in_balance")
+                if "out_balance" in cols:
+                    legacy_cols.add("out_balance")
+        except Exception:
+            pass
+
+        # If legacy NOT NULL columns exist, perform a manual INSERT that populates them
+        if legacy_cols:
+            now = datetime.utcnow()
+            euro_cents_val = int(euro_balance_cents) if euro_balance_cents is not None else 0
+            total_spent = 0
+            total_in_used = 0
+            total_out_used = 0
+
+            # Build dynamic SQL including legacy columns when present
+            cols = [
+                "user_id", "email", "euro_balance_cents", "total_spent_cents",
+                "total_in_used", "total_out_used", "created_at", "updated_at",
+            ]
+            vals = [
+                user_id, (email or None), euro_cents_val, total_spent,
+                total_in_used, total_out_used, now, now,
+            ]
+            if "in_balance" in legacy_cols:
+                cols.append("in_balance")
+                vals.append(0)
+            if "out_balance" in legacy_cols:
+                cols.append("out_balance")
+                vals.append(0)
+
+            placeholders = ", ".join([":" + str(i) for i in range(len(vals))])
+            col_list = ", ".join(cols)
+
+            try:
+                # Use engine.connect() to avoid interfering with the Session lifecycle
+                with engine.connect() as conn:
+                    conn.exec_driver_sql(
+                        f"INSERT INTO user_credits ({col_list}) VALUES ({placeholders})",
+                        {str(i): vals[i] for i in range(len(vals))},
+                    )
+                    # Explicitly commit so the ORM session can see the row
+                    conn.commit()
+                # Make sure the ORM session can see the newly inserted row
+                try:
+                    db.expire_all()
+                except Exception:
+                    pass
+                # Retrieve ORM instance after manual insert
+                uc = db.get(UserCredit, user_id)
+                if uc is None:
+                    # As a fallback, fetch via raw SQL and merge into the session
+                    try:
+                        with engine.connect() as conn:
+                            res = conn.exec_driver_sql(
+                                "SELECT user_id, email, euro_balance_cents, total_spent_cents, total_in_used, total_out_used, created_at, updated_at FROM user_credits WHERE user_id = :uid",
+                                {"uid": user_id},
+                            )
+                            row = res.fetchone()
+                        if row:
+                            uc = UserCredit(
+                                user_id=row[0],
+                                email=row[1],
+                                euro_balance_cents=row[2],
+                                total_spent_cents=row[3],
+                                total_in_used=row[4],
+                                total_out_used=row[5],
+                            )
+                            # created_at / updated_at will be refreshed after merge
+                            uc = db.merge(uc)
+                    except Exception:
+                        pass
+            except Exception:
+                # Fallback to ORM creation if manual insert fails for any reason
+                uc = UserCredit(user_id=user_id, email=email or None)
+        else:
+            # Normal path: use ORM to create a new row
+            uc = UserCredit(user_id=user_id, email=email or None)
+
+    # Apply updates/overrides
     if euro_balance_cents is not None:
         uc.euro_balance_cents = int(euro_balance_cents)
     if email and uc.email != email:
