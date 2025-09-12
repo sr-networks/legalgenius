@@ -33,13 +33,12 @@ Methodology:
 - 10 tough, recent questions (German law; post-update topics)
 - Gold solutions by a domain expert
 - Evaluation: GPT-5 serves as a blind judge with a rubric
-- Reference: r/LocalLLaMA — Agentic Legal Research for German Law — First Benchmark
 
 Result:
-- Even without any optimization, the agent reached GPT-5 level
+- The agent improved significantly and now reaches beyond GPT-5 level
 
 Why this matters:
-- SOTA accuracy at fractional cost with an auditable, tool-using agent; promising for compliant, on-prem legal assistants.
+- High accuracy at fractional cost with an auditable, tool-using agent; promising for compliant, on-prem legal assistants.
 
 Next:
 - Targeted domain adaptation and customer GPUs to run in small to midsized offices
