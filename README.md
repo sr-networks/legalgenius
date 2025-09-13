@@ -694,12 +694,6 @@ The software is provided as-is. German federal laws and regulations are official
 
 The repository includes a working copy of the official scraping tools in `scrapers/gesetze-tools` to download and convert German federal laws to Markdown under `data/gesetze/`.
 
-### One-time setup
-
-- Create a Python virtual environment (optional but recommended):
-  - `python3 -m venv .venv && source .venv/bin/activate`
-- Install scraper requirements:
-  - `cd scrapers/gesetze-tools && pip install -r requirements.txt`
 
 ### Download laws (XML)
 
@@ -799,6 +793,16 @@ chmod +x scripts/scrape_years.sh
 
 # Custom range
 ./scripts/scrape_years.sh 2000 2005
+```
+
+## Populate Court Decisions (Openlegaldata)
+
+Download older cases from
+https://static.openlegaldata.io/dumps/de/2022-10-18/cases.jsonl.gz
+Then run
+
+```bash
+python exportopenlegaldata.py
 ```
 
 ## Contributing
